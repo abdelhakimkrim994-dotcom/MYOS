@@ -17,7 +17,7 @@ The first app is **MYOS Home**, a custom Android launcher.
 
 ## First milestone: MYOS Home
 
-The initial launcher prototype will establish:
+The initial launcher prototype is being developed to provide:
 
 1. A valid Android HOME activity that can be selected as the default launcher.
 2. A minimal, peaceful home screen based on the project's chosen beach-and-ocean visual reference.
@@ -25,12 +25,14 @@ The initial launcher prototype will establish:
 4. Discovery, display, and launching of installed apps.
 5. A predictable way to close the drawer and return home.
 
-The agreed visual and interaction direction is documented in [MYOS Home Design](docs/MYOS_HOME_DESIGN.md).
+The agreed visual and interaction direction is documented in [MYOS Home Design](docs/MYOS_HOME_DESIGN.md). Current implementation progress and known limitations are tracked in [Implementation Status](docs/IMPLEMENTATION_STATUS.md).
 
 ## Current status
 
-This repository is at the documentation and planning stage. No Android application, APK, or functioning launcher is claimed to exist yet.
+The first native Android source scaffold has been committed. It includes a HOME activity, a temporary drawn ocean scene, gesture handling, and basic installed-app discovery and launching.
+
+**Not yet verified:** Gradle build, APK generation, installation, default-launcher selection, and behavior on the user's phone. The exact user-provided beach reference image has not yet been added as an app asset.
 
 ## Development approach
 
-Implementation decisions such as minimum Android version, target SDK, device compatibility, and project structure should be made after checking the target phone and the relevant Android requirements. Each milestone should be built, installed, and verified before being treated as complete.
+The initial Gradle configuration uses provisional SDK settings. Minimum and target SDK versions, edge-to-edge behavior, and device compatibility must be reviewed before treating the configuration as final. Each milestone should be built, installed, and verified before being marked complete.
