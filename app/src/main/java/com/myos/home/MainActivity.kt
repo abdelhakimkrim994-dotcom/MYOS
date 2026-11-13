@@ -17,6 +17,7 @@ import android.os.Looper
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ResolveInfo
@@ -186,6 +187,21 @@ class MainActivity : Activity() {
             strokeJoin = Paint.Join.ROUND
             color = Color.argb(77, 255, 255, 255)
         }
+        private val streakPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            color = Color.WHITE
+        }
+        private val streakPath = Path()
+        private val debugPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = 11f * scaledDensity
+            typeface = Typeface.create("monospace", Typeface.BOLD)
+            setShadowLayer(2f * density, 0f, 1f * density, Color.BLACK)
+        }
+        private val debugBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(150, 8, 24, 35)
+        }
         private val iconShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb(26, 0, 0, 0)
         }
@@ -239,10 +255,16 @@ class MainActivity : Activity() {
                         val a=0.82f
                         if(!gravityInitialized) { for(i in 0..2) gravity[i]=event.values[i]; gravityInitialized=true }
                         else for(i in 0..2) gravity[i]=a*gravity[i]+(1f-a)*event.values[i]
-                        latestRoll=kotlin.math.atan2(gravity[0],gravity[2])
-                        latestPitch=kotlin.math.atan2(-gravity[1],sqrt(gravity[0]*gravity[0]+gravity[2]*gravity[2]))
-                        updateTilt()
-                        detectShake(event.values[0]-gravity[0],event.values[1]-gravity[1],event.values[2]-gravity[2])
+                        val linearX=event.values[0]-gravity[0]
+                        val linearY=event.values[1]-gravity[1]
+                        val linearZ=event.values[2]-gravity[2]
+                        // Use the accelerometer for shake detection even when a rotation-vector sensor exists.
+                        detectShake(linearX,linearY,linearZ)
+                        if(rotationSensor==null) {
+                            latestRoll=kotlin.math.atan2(gravity[0],gravity[2])
+                            latestPitch=kotlin.math.atan2(-gravity[1],sqrt(gravity[0]*gravity[0]+gravity[2]*gravity[2]))
+                            updateTilt()
+                        }
                     }
                 }
             }
@@ -287,7 +309,9 @@ class MainActivity : Activity() {
             sensorManager.unregisterListener(motionListener)
             if(rotationSensor!=null) sensorManager.registerListener(motionListener,rotationSensor,SensorManager.SENSOR_DELAY_GAME)
             else accelerometer?.let { sensorManager.registerListener(motionListener,it,SensorManager.SENSOR_DELAY_GAME) }
-            linearAcceleration?.let { sensorManager.registerListener(motionListener,it,SensorManager.SENSOR_DELAY_GAME) }
+            // Prefer linear acceleration; otherwise keep the raw accelerometer active for shake impulses.
+            val shakeSensor=linearAcceleration ?: if(rotationSensor!=null) accelerometer else null
+            shakeSensor?.let { sensorManager.registerListener(motionListener,it,SensorManager.SENSOR_DELAY_GAME) }
         }
         fun stopMotionSensors() {
             sensorManager.unregisterListener(motionListener)
@@ -643,6 +667,57 @@ class MainActivity : Activity() {
             }
         }
 
+        private fun drawStreaks(c: Canvas, w: Float, h: Float, p: Float) {
+            c.save()
+            c.clipPath(wave.fill)
+            for (i in 0 until 7) {
+                val depth = 0.35f + i * 0.1f
+                val y = h * (0.12f + i * 0.125f) + motionY * 10f * density * depth
+                val x = w * ((i * 0.37f) % 1f) + motionX * 60f * density * depth
+                val len = w * (0.25f + 0.08f * (i % 3))
+                streakPaint.strokeWidth = (1.2f + depth) * density
+                streakPaint.alpha = (p * p * 38f * depth).toInt().coerceIn(0, 255)
+                streakPath.rewind()
+                streakPath.moveTo(x - len / 2f, y)
+                streakPath.quadTo(x, y - 6f * density, x + len / 2f, y)
+                c.drawPath(streakPath, streakPaint)
+            }
+
+            // A shake launches a visible wave ring that expands and fades inside the water.
+            val age = if (shakeKickAt == 0L) Long.MAX_VALUE else (SystemClock.uptimeMillis() - shakeKickAt).coerceAtLeast(0L)
+            if (age < 1250L) {
+                val progress = age / 1250f
+                val radius = progress * max(w, h) * 0.78f
+                val alpha = ((1f - progress) * 115f * shakeStrength.coerceAtMost(1.4f)).toInt().coerceIn(0, 180)
+                streakPaint.strokeWidth = (2.2f + (1f - progress) * 2f) * density
+                streakPaint.alpha = alpha
+                c.drawCircle(w * 0.5f, h * 0.52f, radius, streakPaint)
+            }
+            c.restore()
+        }
+
+        private fun drawMotionDebug(c: Canvas) {
+            val line = String.format(
+                Locale.US,
+                "roll=%.0f° pitch=%.0f° mx=%.2f my=%.2f",
+                Math.toDegrees(latestRoll.toDouble()),
+                Math.toDegrees(latestPitch.toDouble()),
+                motionX,
+                motionY
+            )
+            val x = 10f * density
+            val baseline = 25f * density
+            val padX = 7f * density
+            val padY = 5f * density
+            val width = debugPaint.measureText(line)
+            c.drawRoundRect(
+                x, baseline - debugPaint.textSize - padY,
+                x + width + padX * 2f, baseline + padY,
+                6f * density, 6f * density, debugBackgroundPaint
+            )
+            c.drawText(line, x + padX, baseline, debugPaint)
+        }
+
         private fun drawWater(canvas: Canvas) {
             canvas.save()
             val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
@@ -664,6 +739,7 @@ class MainActivity : Activity() {
                     canvas.drawPath(wave.fill, tintPaint)
                 }
             }
+            drawStreaks(canvas, width.toFloat(), height.toFloat(), drawerProgress)
             canvas.save()
             canvas.translate(0f, 6f * density)
             canvas.drawPath(wave.edge, softFoamPaint)
@@ -829,6 +905,7 @@ class MainActivity : Activity() {
             wave.build(w,h,waterY,amplitude,drawerProgress,motionX,motionY,shake,motionVelocityX,motionVelocityY,density)
             if (drawerProgress < 1f) drawHome(canvas)
             drawWater(canvas)
+            drawMotionDebug(canvas)
             drawWaterLife(canvas)
             drawApps(canvas)
         }
