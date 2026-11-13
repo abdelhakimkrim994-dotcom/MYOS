@@ -416,6 +416,7 @@ class MainActivity : Activity() {
                 val alpha = (255f * eased).toInt()
                 val scale = 0.92f + 0.08f * eased
                 val translateY = (1f - eased) * 24f * density
+                val cy = centerY + translateY
                 val app = apps[index]
                 var raftX = 0f
                 var raftY = 0f
