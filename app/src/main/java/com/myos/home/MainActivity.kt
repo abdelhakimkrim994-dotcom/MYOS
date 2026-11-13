@@ -1,5 +1,7 @@
 package com.myos.home
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Intent
@@ -7,20 +9,26 @@ import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
-import android.view.Window
 import android.view.WindowManager
+import android.view.animation.PathInterpolator
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 class MainActivity : Activity() {
     private lateinit var launcherView: LauncherView
@@ -28,8 +36,9 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-        window.statusBarColor = android.graphics.Color.WHITE
-        window.navigationBarColor = android.graphics.Color.WHITE
+        val ivory = Color.rgb(250, 248, 243)
+        window.statusBarColor = ivory
+        window.navigationBarColor = ivory
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             window.decorView.systemUiVisibility =
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
@@ -45,7 +54,7 @@ class MainActivity : Activity() {
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        if (::launcherView.isInitialized && launcherView.isDrawerOpen) {
+        if (::launcherView.isInitialized && launcherView.drawerProgress > 0f) {
             launcherView.closeDrawer()
         } else {
             super.onBackPressed()
@@ -55,34 +64,75 @@ class MainActivity : Activity() {
     private data class LaunchableApp(
         val label: String,
         val icon: Drawable,
-        val packageName: String,
-        val activityName: String
+        val packageName: String
     )
 
     private inner class LauncherView : View(this@MainActivity) {
-        var isDrawerOpen = false
+        var drawerProgress = 0f
             private set
+        val isDrawerOpen: Boolean get() = drawerProgress >= 0.999f
 
-        private val white = android.graphics.Color.rgb(250, 250, 248)
-        private val ocean = android.graphics.Color.rgb(18, 105, 145)
-        private val deepOcean = android.graphics.Color.rgb(8, 62, 91)
-        private val ink = android.graphics.Color.rgb(28, 43, 49)
-        private val muted = android.graphics.Color.rgb(105, 120, 125)
-
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val density = resources.displayMetrics.density
+        private val scaledDensity = resources.displayMetrics.scaledDensity
+        private val ivory = Color.rgb(250, 248, 243)
+        private val white = Color.WHITE
         private val apps = mutableListOf<LaunchableApp>()
+
+        private val photo: Bitmap? = loadOceanPhoto()
+        private val photoRect = RectF()
+        private val homeFadePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val foamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 3f * density
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = Color.argb(230, 255, 255, 255)
+        }
+        private val softFoamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 6f * density
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = Color.argb(77, 255, 255, 255)
+        }
+        private val iconShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(26, 0, 0, 0)
+        }
+        private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = white
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+            textSize = 11f * scaledDensity
+            setShadowLayer(2f * density, 0f, 1f * density, Color.argb(90, 0, 0, 0))
+        }
+        private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(179, 138, 143, 140)
+            textAlign = Paint.Align.LEFT
+            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+            textSize = 13f * scaledDensity
+        }
+        private val wave = WaveShape()
+        private var homeWaterline = 0f
+        private var fadeShader: LinearGradient? = null
+        private var tintShader: LinearGradient? = null
+        private var animator: ValueAnimator? = null
         private var downX = 0f
         private var downY = 0f
         private var lastY = 0f
+        private var downProgress = 0f
         private var scrollY = 0f
         private var maxScroll = 0f
-        private var downTime = 0L
-        private val iconRects = mutableListOf<Pair<RectF, LaunchableApp>>()
-        private val wavePath = Path()
-        private val oceanPhoto: Bitmap? = loadOceanPhoto()
-        private var drawerProgress = 0f
-        private var drawerAnimator: ValueAnimator? = null
-        private var isAnimatingDrawer = false
+        private var velocityTracker: VelocityTracker? = null
+        private var gestureMode = GestureMode.NONE
+        private var isAnimating = false
+        private var hitRects = ArrayList<HitRect>()
+        private val tempOval = RectF()
+        private val columns = 4
+
+        private enum class GestureMode { NONE, OPENING, CLOSING, SCROLLING }
+
+        private data class HitRect(val bounds: RectF, val app: LaunchableApp)
 
         private fun loadOceanPhoto(): Bitmap? = try {
             assets.open("myos_ocean.jpg").use { BitmapFactory.decodeStream(it) }
@@ -92,6 +142,7 @@ class MainActivity : Activity() {
 
         init {
             isFocusable = true
+            isClickable = true
             contentDescription = "MYOS Home. Swipe up to open your apps."
             reloadApps()
         }
@@ -107,7 +158,6 @@ class MainActivity : Activity() {
                 @Suppress("DEPRECATION")
                 packageManager.queryIntentActivities(intent, 0)
             }
-
             apps.clear()
             results
                 .filter { it.activityInfo.packageName != context.packageName }
@@ -118,42 +168,70 @@ class MainActivity : Activity() {
                         LaunchableApp(
                             info.loadLabel(packageManager).toString(),
                             info.loadIcon(packageManager),
-                            info.activityInfo.packageName,
-                            info.activityInfo.name
+                            info.activityInfo.packageName
                         )
                     )
                 }
+            calculateScrollBounds()
             invalidate()
         }
 
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            super.onSizeChanged(w, h, oldw, oldh)
+            homeWaterline = h * 0.58f
+            val fadeBottom = homeWaterline + 48f * density
+            fadeShader = LinearGradient(
+                0f, homeWaterline, 0f, fadeBottom,
+                ivory, Color.TRANSPARENT, Shader.TileMode.CLAMP
+            )
+            homeFadePaint.shader = fadeShader
+            tintShader = LinearGradient(
+                0f, 0f, 0f, h.toFloat(),
+                intArrayOf(Color.rgb(14, 124, 140), Color.rgb(47, 180, 188)),
+                null, Shader.TileMode.CLAMP
+            )
+            tintPaint.shader = tintShader
+            calculateScrollBounds()
+        }
+
+        private fun calculateScrollBounds() {
+            if (height <= 0) return
+            val top = 0.18f * height
+            val rowHeight = 104f * density
+            val rows = (apps.size + columns - 1) / columns
+            val contentBottom = top + max(0, rows - 1) * rowHeight + 92f * density
+            maxScroll = max(0f, contentBottom - (height - 24f * density))
+            scrollY = scrollY.coerceIn(0f, maxScroll)
+        }
+
         fun closeDrawer() {
-            if (isAnimatingDrawer || !isDrawerOpen) return
-            animateDrawer(1f, 0f, opening = false)
+            if (drawerProgress <= 0f || isAnimating) return
+            settleDrawer(false)
         }
 
-        private fun openDrawer() {
-            if (isAnimatingDrawer || isDrawerOpen) return
-            scrollY = 0f
-            animateDrawer(0f, 1f, opening = true)
-        }
-
-        private fun animateDrawer(from: Float, to: Float, opening: Boolean) {
-            drawerAnimator?.cancel()
-            isAnimatingDrawer = true
-            drawerProgress = from
-            drawerAnimator = ValueAnimator.ofFloat(from, to).apply {
-                duration = 560L
-                interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+        private fun settleDrawer(open: Boolean) {
+            animator?.cancel()
+            isAnimating = true
+            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            val target = if (open) 1f else 0f
+            val start = drawerProgress
+            animator = ValueAnimator.ofFloat(start, target).apply {
+                duration = if (open) 520L else 420L
+                interpolator = if (open) {
+                    PathInterpolator(0.22f, 1f, 0.36f, 1f)
+                } else {
+                    PathInterpolator(0.4f, 0f, 0.2f, 1f)
+                }
                 addUpdateListener {
                     drawerProgress = it.animatedValue as Float
                     invalidate()
                 }
-                addListener(object : android.animation.AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: android.animation.Animator) {
-                        drawerProgress = to
-                        isDrawerOpen = opening
-                        if (!opening) scrollY = 0f
-                        isAnimatingDrawer = false
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        drawerProgress = target
+                        if (!open) scrollY = 0f
+                        isAnimating = false
+                        setLayerType(View.LAYER_TYPE_NONE, null)
                         invalidate()
                     }
                 })
@@ -161,197 +239,232 @@ class MainActivity : Activity() {
             }
         }
 
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            if (isDrawerOpen && !isAnimatingDrawer) {
-                drawDrawer(canvas)
-                return
-            }
-
-            drawHome(canvas)
-            if (drawerProgress > 0f) {
-                val w = width.toFloat()
-                val h = height.toFloat()
-                val crest = h * (1f - drawerProgress)
-                val amplitude = h * 0.035f * (1f - drawerProgress)
-                val waveEdge = Path().apply {
-                    moveTo(0f, crest + amplitude)
-                    cubicTo(w * 0.28f, crest - amplitude, w * 0.68f, crest + amplitude, w, crest - amplitude * 0.25f)
-                }
-                val reveal = Path(waveEdge).apply {
-                    lineTo(w, h)
-                    lineTo(0f, h)
-                    close()
-                }
-                canvas.save()
-                canvas.clipPath(reveal)
-                drawDrawer(canvas)
-                canvas.restore()
-
-                // A restrained foam edge makes the reveal feel like one rising shoreline.
-                paint.style = Paint.Style.STROKE
-                paint.strokeWidth = 2.2f * resources.displayMetrics.density
-                paint.color = android.graphics.Color.argb(190, 255, 255, 255)
-                canvas.drawPath(waveEdge, paint)
-                paint.style = Paint.Style.FILL
-            }
-        }
-
-        private fun drawOceanPhoto(canvas: Canvas): Boolean {
-            val photo = oceanPhoto ?: return false
+        private fun drawPhoto(canvas: Canvas) {
+            val bitmap = photo ?: return
             val w = width.toFloat()
             val h = height.toFloat()
-            // Use the identical crop on home and drawer so the ocean never jumps at the reveal.
-            val scale = max(w / photo.width, h / photo.height)
-            val drawW = photo.width * scale
-            val drawH = photo.height * scale
-            val left = (w - drawW) / 2f
-            val top = (h - drawH) / 2f
-            paint.alpha = 255
-            canvas.drawBitmap(photo, null, RectF(left, top, left + drawW, top + drawH), paint)
-            return true
+            val scale = max(w / bitmap.width, h / bitmap.height)
+            val dw = bitmap.width * scale
+            val dh = bitmap.height * scale
+            photoRect.set((w - dw) / 2f, (h - dh) / 2f, (w + dw) / 2f, (h + dh) / 2f)
+            canvas.drawBitmap(bitmap, null, photoRect, null)
         }
 
         private fun drawHome(canvas: Canvas) {
-            canvas.drawColor(white)
-            val w = width.toFloat()
-            val h = height.toFloat()
-
-            if (drawOceanPhoto(canvas)) {
-                // Keep the gesture hint subtle and readable over the turquoise water.
-                paint.color = android.graphics.Color.WHITE
-                paint.setShadowLayer(4f, 0f, 1f, android.graphics.Color.argb(110, 0, 45, 55))
-                paint.textAlign = Paint.Align.CENTER
-                paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-                paint.textSize = 14f * resources.displayMetrics.scaledDensity
-                canvas.drawText("Swipe up to open", w / 2f, h * 0.91f, paint)
-                paint.clearShadowLayer()
-                return
+            canvas.drawColor(ivory)
+            if (photo != null) {
+                canvas.save()
+                canvas.clipRect(0f, homeWaterline, width.toFloat(), height.toFloat())
+                drawPhoto(canvas)
+                canvas.restore()
+                homeFadePaint.shader = fadeShader
+                canvas.drawRect(0f, homeWaterline, width.toFloat(), homeWaterline + 48f * density, homeFadePaint)
             }
-
-            // Temporary vector fallback remains available until the photo asset is bundled.
-            val horizon = h * 0.53f
-            wavePath.reset()
-            wavePath.moveTo(0f, horizon + h * 0.025f)
-            wavePath.cubicTo(w * 0.25f, horizon - h * 0.055f, w * 0.53f, horizon + h * 0.09f, w, horizon - h * 0.015f)
-            wavePath.lineTo(w, h)
-            wavePath.lineTo(0f, h)
-            wavePath.close()
-
-            paint.color = ocean
-            canvas.drawPath(wavePath, paint)
-
-            paint.color = deepOcean
-            val lowerWave = Path().apply {
-                moveTo(0f, horizon + h * 0.12f)
-                cubicTo(w * 0.32f, horizon + h * 0.04f, w * 0.7f, horizon + h * 0.19f, w, horizon + h * 0.08f)
-                lineTo(w, h)
-                lineTo(0f, h)
-                close()
-            }
-            canvas.drawPath(lowerWave, paint)
-
-            paint.color = ink
-            paint.textAlign = Paint.Align.CENTER
-            paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            paint.textSize = 14f * resources.displayMetrics.scaledDensity
-            canvas.drawText("Swipe up to open", w / 2f, h * 0.91f, paint)
+            drawHint(canvas)
         }
 
-        private fun drawDrawer(canvas: Canvas) {
-            val w = width.toFloat()
-            val h = height.toFloat()
-            if (!drawOceanPhoto(canvas)) canvas.drawColor(deepOcean)
-            // A light blue veil keeps app icons legible without introducing a separate panel.
-            paint.color = android.graphics.Color.argb(105, 3, 35, 55)
-            canvas.drawRect(0f, 0f, w, h, paint)
+        private fun drawHint(canvas: Canvas) {
+            val text = "Swipe up to open"
+            val letterSpacing = 0.12f * 13f * scaledDensity
+            var total = 0f
+            for (i in text.indices) total += hintPaint.measureText(text, i, i + 1)
+            total += letterSpacing * (text.length - 1)
+            var x = (width - total) / 2f
+            val baseline = homeWaterline - 20f * density
+            for (i in text.indices) {
+                val next = x + hintPaint.measureText(text, i, i + 1)
+                canvas.drawText(text, i, i + 1, x, baseline, hintPaint)
+                x = next + letterSpacing
+            }
+        }
 
-            paint.color = android.graphics.Color.WHITE
-            paint.textAlign = Paint.Align.CENTER
-            paint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            paint.textSize = 20f * resources.displayMetrics.scaledDensity
-            canvas.drawText("Your apps", w / 2f, h * 0.105f, paint)
-
-            iconRects.clear()
-            val columns = 4
-            val horizontalPadding = w * 0.07f
-            val cellWidth = (w - horizontalPadding * 2f) / columns
-            val iconSize = min(cellWidth * 0.54f, 58f * resources.displayMetrics.density)
-            val top = h * 0.23f
-            val rowHeight = max(iconSize + 44f * resources.displayMetrics.density, h * 0.13f)
-            val contentHeight = top + ((apps.size + columns - 1) / columns) * rowHeight + h * 0.05f
-            maxScroll = max(0f, contentHeight - h)
-            scrollY = scrollY.coerceIn(0f, maxScroll)
+        private fun drawWater(canvas: Canvas) {
+            if (photo == null) {
+                canvas.drawColor(Color.rgb(14, 124, 140))
+            } else {
+                canvas.save()
+                canvas.clipPath(wave.fill)
+                drawPhoto(canvas)
+                tintPaint.alpha = (115f * drawerProgress).toInt().coerceIn(0, 115)
+                canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), tintPaint)
+                canvas.restore()
+            }
 
             canvas.save()
-            canvas.clipRect(0f, h * 0.2f, w, h)
+            canvas.translate(0f, 6f * density)
+            canvas.drawPath(wave.edge, softFoamPaint)
+            canvas.restore()
+            canvas.drawPath(wave.edge, foamPaint)
+        }
+
+        private fun drawApps(canvas: Canvas) {
+            val w = width.toFloat()
+            val h = height.toFloat()
+            val horizontalPadding = 18f * density
+            val cellWidth = (w - horizontalPadding * 2f) / columns
+            val iconSize = 56f * density
+            val firstRowY = 0.19f * h
+            val rowHeight = 104f * density
+            val labelOffset = 13f * density
+            hitRects.clear()
+
+            canvas.save()
+            canvas.clipRect(0f, 0f, w, h)
             canvas.translate(0f, -scrollY)
 
-            apps.forEachIndexed { index, app ->
+            for (index in apps.indices) {
                 val row = index / columns
                 val col = index % columns
-                val stagger = if (row % 2 == 0) 0f else cellWidth * 0.08f
-                val centerX = horizontalPadding + cellWidth * (col + 0.5f) + stagger
-                val centerY = top + row * rowHeight
-                val iconTop = centerY - iconSize / 2f
-                val rect = RectF(centerX - iconSize / 2f, iconTop, centerX + iconSize / 2f, iconTop + iconSize)
-                app.icon.setBounds(rect.left.toInt(), rect.top.toInt(), rect.right.toInt(), rect.bottom.toInt())
-                app.icon.draw(canvas)
-                iconRects.add(Pair(RectF(rect.left - 12f, rect.top - 12f, rect.right + 12f, rect.bottom + 42f), app))
+                val centerX = horizontalPadding + cellWidth * (col + 0.5f)
+                val columnFloat = if (col % 2 == 0) -10f else 10f
+                val centerY = firstRowY + row * rowHeight + columnFloat * density
+                val waterY = height - drawerProgress * height * 1.08f
+                val columnDelay = col * 12f * density
+                val reveal = ((centerY - waterY - columnDelay) / (120f * density)).coerceIn(0f, 1f)
+                if (reveal <= 0f) continue
 
-                paint.color = android.graphics.Color.WHITE
-                paint.textAlign = Paint.Align.CENTER
-                paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-                paint.textSize = 10f * resources.displayMetrics.scaledDensity
-                val label = if (app.label.length > 13) app.label.take(12) + "…" else app.label
-                canvas.drawText(label, centerX, rect.bottom + 22f * resources.displayMetrics.density, paint)
+                val eased = reveal * reveal * (3f - 2f * reveal)
+                val alpha = (255f * eased).toInt()
+                val scale = 0.92f + 0.08f * eased
+                val translateY = (1f - eased) * 24f * density
+                val cy = centerY + translateY
+                val half = iconSize * scale / 2f
+
+                tempOval.set(centerX - 18f * density, cy + half + 5f * density,
+                    centerX + 18f * density, cy + half + 11f * density)
+                iconShadowPaint.alpha = (26f * eased).toInt()
+                canvas.drawOval(tempOval, iconShadowPaint)
+
+                val app = apps[index]
+                val save = canvas.save()
+                canvas.translate(centerX, cy)
+                canvas.scale(scale, scale)
+                app.icon.alpha = alpha
+                app.icon.setBounds((-iconSize / 2f).toInt(), (-iconSize / 2f).toInt(),
+                    (iconSize / 2f).toInt(), (iconSize / 2f).toInt())
+                app.icon.draw(canvas)
+                canvas.restoreToCount(save)
+                app.icon.alpha = 255
+
+                labelPaint.alpha = alpha
+                val label = if (app.label.length > 15) app.label.take(14) + "…" else app.label
+                canvas.drawText(label, centerX, cy + half + labelOffset, labelPaint)
+
+                val hitTop = cy - half - 8f * density
+                val hitBottom = cy + half + 34f * density
+                hitRects.add(HitRect(
+                    RectF(centerX - cellWidth * 0.46f, hitTop, centerX + cellWidth * 0.46f, hitBottom),
+                    app
+                ))
             }
             canvas.restore()
+            labelPaint.alpha = 255
+            iconShadowPaint.alpha = 26
+        }
 
-            if (apps.isEmpty()) {
-                paint.color = android.graphics.Color.WHITE
-                paint.textAlign = Paint.Align.CENTER
-                paint.textSize = 14f * resources.displayMetrics.scaledDensity
-                canvas.drawText("No launchable apps found", w / 2f, h * 0.5f, paint)
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            if (drawerProgress <= 0f) {
+                drawHome(canvas)
+                return
             }
+            val h = height.toFloat()
+            val w = width.toFloat()
+            val waterY = h - drawerProgress * h * 1.08f
+            val amplitude = 28f * density * sin(PI.toFloat() * drawerProgress)
+            wave.build(w, h, waterY, amplitude, drawerProgress)
+            if (drawerProgress < 1f) drawHome(canvas)
+            drawWater(canvas)
+            drawApps(canvas)
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    animator?.cancel()
+                    isAnimating = false
+                    setLayerType(View.LAYER_TYPE_NONE, null)
                     downX = event.x
                     downY = event.y
                     lastY = event.y
-                    downTime = System.currentTimeMillis()
+                    downProgress = drawerProgress
+                    velocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
+                    gestureMode = when {
+                        drawerProgress <= 0f -> GestureMode.OPENING
+                        drawerProgress >= 0.999f && downY < height * 0.18f -> GestureMode.CLOSING
+                        drawerProgress >= 0.999f && scrollY <= 0f -> GestureMode.CLOSING
+                        drawerProgress >= 0.999f -> GestureMode.SCROLLING
+                        else -> GestureMode.CLOSING
+                    }
                     return true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dy = event.y - lastY
-                    if (isDrawerOpen && !isAnimatingDrawer && downY > height * 0.2f) {
-                        scrollY = (scrollY - dy).coerceIn(0f, maxScroll)
-                        invalidate()
+                    velocityTracker?.addMovement(event)
+                    val dy = event.y - downY
+                    when (gestureMode) {
+                        GestureMode.OPENING -> {
+                            drawerProgress = (downProgress - dy / (height * 0.70f)).coerceIn(0f, 1f)
+                            invalidate()
+                        }
+                        GestureMode.CLOSING -> {
+                            if (dy > 0f) {
+                                drawerProgress = (downProgress - dy / (height * 0.70f)).coerceIn(0f, 1f)
+                                invalidate()
+                            } else if (drawerProgress >= 0.999f && scrollY > 0f) {
+                                gestureMode = GestureMode.SCROLLING
+                            }
+                        }
+                        GestureMode.SCROLLING -> {
+                            val delta = event.y - lastY
+                            scrollY = (scrollY - delta).coerceIn(0f, maxScroll)
+                            invalidate()
+                        }
+                        GestureMode.NONE -> Unit
                     }
                     lastY = event.y
                     return true
                 }
-                MotionEvent.ACTION_UP -> {
-                    val dx = event.x - downX
-                    val dy = event.y - downY
-                    if (isAnimatingDrawer) return true
-                    if (abs(dy) > 70f && abs(dy) > abs(dx) * 1.2f) {
-                        if (!isDrawerOpen && dy < 0f) openDrawer()
-                        else if (isDrawerOpen && dy > 0f && (scrollY <= 0f || downY < height * 0.2f)) closeDrawer()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    velocityTracker?.addMovement(event)
+                    velocityTracker?.computeCurrentVelocity(1000)
+                    val velocityY = velocityTracker?.yVelocity ?: 0f
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+
+                    if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                        if (drawerProgress > 0f) settleDrawer(drawerProgress >= 0.35f)
                         return true
                     }
 
-                    if (isDrawerOpen && abs(dx) < 18f && abs(dy) < 18f) {
-                        val hit = iconRects.firstOrNull { it.first.contains(event.x, event.y + scrollY) }
-                        hit?.second?.let { app ->
-                            val launchIntent = packageManager.getLaunchIntentForPackage(app.packageName)
-                            if (launchIntent != null) startActivity(launchIntent)
+                    when (gestureMode) {
+                        GestureMode.OPENING, GestureMode.CLOSING -> {
+                            val flingOpen = velocityY < -800f * density
+                            val flingClose = velocityY > 800f * density
+                            val shouldOpen = when {
+                                flingOpen -> true
+                                flingClose -> false
+                                else -> drawerProgress > 0.35f
+                            }
+                            settleDrawer(shouldOpen)
+                        }
+                        GestureMode.SCROLLING -> {
+                            if (scrollY <= 0f && event.y - downY > 70f * density) {
+                                drawerProgress = (1f - (event.y - downY) / (height * 0.70f)).coerceIn(0f, 1f)
+                                settleDrawer(drawerProgress >= 0.35f)
+                            }
+                        }
+                        GestureMode.NONE -> Unit
+                    }
+
+                    if (drawerProgress >= 0.98f && abs(event.x - downX) < 18f * density &&
+                        abs(event.y - downY) < 18f * density) {
+                        val hit = hitRects.lastOrNull { it.bounds.contains(event.x, event.y + scrollY) }
+                        hit?.app?.let { app ->
+                            packageManager.getLaunchIntentForPackage(app.packageName)?.let(::startActivity)
                         }
                     }
                     performClick()
+                    gestureMode = GestureMode.NONE
                     return true
                 }
             }
@@ -361,6 +474,42 @@ class MainActivity : Activity() {
         override fun performClick(): Boolean {
             super.performClick()
             return true
+        }
+    }
+
+    private class WaveShape {
+        private val xs = floatArrayOf(-0.12f, 0.17f, 0.46f, 0.79f, 1.12f)
+        private val ys = floatArrayOf(0.55f, -1.00f, 0.70f, -0.75f, 0.45f)
+        val edge = Path()
+        val fill = Path()
+
+        fun build(w: Float, h: Float, waterY: Float, amp: Float, phase: Float) {
+            val shift = phase * 0.06f * w
+            edge.rewind()
+            var previousX = xs[0] * w + shift
+            var previousY = pointY(0, waterY, amp, phase)
+            edge.moveTo(previousX, previousY)
+            for (i in 1 until xs.size) {
+                val x = xs[i] * w + shift
+                val y = pointY(i, waterY, amp, phase)
+                val dx = x - previousX
+                edge.cubicTo(
+                    previousX + dx * 0.45f, previousY,
+                    x - dx * 0.45f, y,
+                    x, y
+                )
+                previousX = x
+                previousY = y
+            }
+            fill.set(edge)
+            fill.lineTo(previousX, h)
+            fill.lineTo(xs[0] * w + shift, h)
+            fill.close()
+        }
+
+        private fun pointY(index: Int, baseline: Float, amplitude: Float, phase: Float): Float {
+            val wobble = 1f + 0.18f * sin(phase * 2f * PI.toFloat() + index * 1.7f)
+            return baseline + ys[index] * amplitude * wobble
         }
     }
 }
