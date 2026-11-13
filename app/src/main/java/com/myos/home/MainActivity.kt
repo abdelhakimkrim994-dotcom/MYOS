@@ -106,6 +106,7 @@ class MainActivity : Activity() {
     }
 
     private enum class GestureMode { NONE, OPENING, CLOSING, SCROLLING }
+    private enum class WeatherKind { CLEAR, CLOUDS, RAIN, STORM, SNOW, FOG, NIGHT }
 
     private data class HitRect(val bounds: RectF, val app: LaunchableApp)
 
@@ -198,7 +199,6 @@ class MainActivity : Activity() {
         private var hitRects = ArrayList<HitRect>()
         private val tempOval = RectF()
         private val columns = 4
-        private enum class WeatherKind { CLEAR, CLOUDS, RAIN, STORM, SNOW, FOG, NIGHT }
 
         private val motionListener = object : SensorEventListener {
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
