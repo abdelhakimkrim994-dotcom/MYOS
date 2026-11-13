@@ -121,8 +121,14 @@ class MainActivity : Activity() {
         private val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
             ?: sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         private val linearAcceleration = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
+        // Water motion is a damped physical response, not a direct copy of the phone angle.
         private var motionX = 0f
         private var motionY = 0f
+        private var targetMotionX = 0f
+        private var targetMotionY = 0f
+        private var motionVelocityX = 0f
+        private var motionVelocityY = 0f
+        private var lastPhysicsFrame = 0L
         private var latestRoll = 0f
         private var latestPitch = 0f
         private var neutralRoll = 0f
@@ -244,23 +250,50 @@ class MainActivity : Activity() {
         private fun updateTilt() {
             val tx=if(drawerProgress>=0.05f && hasNeutralPose) ((latestRoll-neutralRoll)/0.26f).coerceIn(-1f,1f) else (latestRoll/0.62f).coerceIn(-0.7f,0.7f)
             val ty=if(drawerProgress>=0.05f && hasNeutralPose) ((latestPitch-neutralPitch)/0.26f).coerceIn(-1f,1f) else (latestPitch/0.62f).coerceIn(-0.7f,0.7f)
-            motionX+=(tx-motionX)*0.14f; motionY+=(ty-motionY)*0.14f
+            targetMotionX=tx
+            targetMotionY=ty
             postInvalidateOnAnimation()
         }
+
+        // A critically damped spring gives the liquid mass: it lags behind tilt, overshoots gently,
+        // and settles instead of snapping to the latest sensor reading.
+        private fun advanceWaterPhysics(now:Long) {
+            if(lastPhysicsFrame==0L) { lastPhysicsFrame=now; return }
+            val dt=((now-lastPhysicsFrame)/1000f).coerceIn(0.001f,0.04f)
+            lastPhysicsFrame=now
+            val stiffness=18f
+            val damping=6.4f
+            val ax=(targetMotionX-motionX)*stiffness-motionVelocityX*damping
+            val ay=(targetMotionY-motionY)*stiffness-motionVelocityY*damping
+            motionVelocityX=(motionVelocityX+ax*dt).coerceIn(-3.2f,3.2f)
+            motionVelocityY=(motionVelocityY+ay*dt).coerceIn(-3.2f,3.2f)
+            motionX=(motionX+motionVelocityX*dt).coerceIn(-1.15f,1.15f)
+            motionY=(motionY+motionVelocityY*dt).coerceIn(-1.15f,1.15f)
+        }
+
         private fun detectShake(x:Float,y:Float,z:Float) {
             val magnitude=sqrt(x*x+y*y+z*z); val now=SystemClock.uptimeMillis()
-            if(magnitude>12f && now-lastShakeAt>650L) {
-                lastShakeAt=now; shakeKickAt=now; shakeStrength=(magnitude/18f).coerceIn(0.65f,1.35f); invalidate()
+            if(magnitude>8f && now-lastShakeAt>650L) {
+                lastShakeAt=now
+                shakeKickAt=now
+                shakeStrength=(magnitude/15f).coerceIn(0.7f,1.7f)
+                // A shake injects momentum into the liquid; the spring and damping do the rest.
+                motionVelocityX=(motionVelocityX+x*0.045f).coerceIn(-3.2f,3.2f)
+                motionVelocityY=(motionVelocityY+y*0.045f-z*0.018f).coerceIn(-3.2f,3.2f)
+                invalidate()
             }
         }
         fun startMotionSensors() {
             sensorManager.unregisterListener(motionListener)
-            if(rotationSensor!=null) sensorManager.registerListener(motionListener,rotationSensor,SensorManager.SENSOR_DELAY_UI)
-            else accelerometer?.let { sensorManager.registerListener(motionListener,it,SensorManager.SENSOR_DELAY_UI) }
+            if(rotationSensor!=null) sensorManager.registerListener(motionListener,rotationSensor,SensorManager.SENSOR_DELAY_GAME)
+            else accelerometer?.let { sensorManager.registerListener(motionListener,it,SensorManager.SENSOR_DELAY_GAME) }
             linearAcceleration?.let { sensorManager.registerListener(motionListener,it,SensorManager.SENSOR_DELAY_GAME) }
         }
         fun stopMotionSensors() {
-            sensorManager.unregisterListener(motionListener); motionX*=0.35f; motionY*=0.35f; hasNeutralPose=false
+            sensorManager.unregisterListener(motionListener)
+            targetMotionX=0f; targetMotionY=0f
+            motionVelocityX*=0.25f; motionVelocityY*=0.25f
+            hasNeutralPose=false
         }
 
         fun startWeatherUpdates() {
@@ -474,11 +507,15 @@ class MainActivity : Activity() {
             raftGainAnimator = null
             if (raftAnimator?.isRunning != true) {
                 raftStartTime = SystemClock.uptimeMillis()
+                lastPhysicsFrame=SystemClock.uptimeMillis()
                 raftAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
                     duration = 10_000L
                     repeatCount = ValueAnimator.INFINITE
                     interpolator = LinearInterpolator()
-                    addUpdateListener { invalidate() }
+                    addUpdateListener {
+                        advanceWaterPhysics(SystemClock.uptimeMillis())
+                        invalidate()
+                    }
                     start()
                 }
             }
@@ -610,7 +647,8 @@ class MainActivity : Activity() {
             canvas.save()
             val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
             val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
-            canvas.translate(motionX*4.5f*density+shake*2.5f*density,motionY*3.5f*density)
+            // Overscanned water artwork moves with the simulated liquid mass.
+            canvas.translate(motionX*14f*density+shake*2.5f*density,motionY*8f*density)
             if (!weatherConfirmed) {
                 // Keep the drawer calm and neutral until the matching weather/time scene is confirmed.
                 canvas.drawPath(wave.fill, neutralWaterPaint)
@@ -738,8 +776,9 @@ class MainActivity : Activity() {
                     raftY = bob * 13f * density * raftGain
                     raftRotation = tilt * 4.2f * raftGain
                 }
-                val drawCenterX=centerX+raftX+motionX*1.0f*density
-                val drawCy=cy+raftY+motionY*1.0f*density
+                // Icons are lighter than the water: they follow its drift with a smaller, delayed response.
+                val drawCenterX=centerX+raftX+motionX*3.5f*density+motionVelocityX*0.65f*density
+                val drawCy=cy+raftY+motionY*2.5f*density+motionVelocityY*0.45f*density
                 val half = iconSize * scale / 2f
 
                 val groupSave = canvas.save()
@@ -787,7 +826,7 @@ class MainActivity : Activity() {
             val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
             val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
             val amplitude=28f*density*sin(PI.toFloat()*drawerProgress)+7f*density*shake
-            wave.build(w,h,waterY,amplitude,drawerProgress,motionX,motionY,shake)
+            wave.build(w,h,waterY,amplitude,drawerProgress,motionX,motionY,shake,motionVelocityX,motionVelocityY,density)
             if (drawerProgress < 1f) drawHome(canvas)
             drawWater(canvas)
             drawWaterLife(canvas)
@@ -904,20 +943,26 @@ class MainActivity : Activity() {
         val edge = Path()
         val fill = Path()
 
-        fun build(w:Float,h:Float,waterY:Float,amp:Float,phase:Float,tiltX:Float,tiltY:Float,ripple:Float) {
-            val shift=phase*0.06f*w+tiltX*5f
+        fun build(w:Float,h:Float,waterY:Float,amp:Float,phase:Float,tiltX:Float,tiltY:Float,ripple:Float,velocityX:Float,velocityY:Float,density:Float) {
+            // Keep the drawer reveal shift separate from tilt: tilt moves the whole water mass.
+            val shift=phase*0.06f*w+tiltX*14f*density
             edge.rewind()
-            var px=xs[0]*w+shift; var py=pointY(0,waterY,amp,phase,tiltX,tiltY,ripple)
+            var px=xs[0]*w+shift; var py=pointY(0,waterY,amp,phase,tiltX,tiltY,ripple,velocityX,velocityY,density)
             edge.moveTo(px,py)
             for(i in 1 until xs.size) {
-                val x=xs[i]*w+shift; val y=pointY(i,waterY,amp,phase,tiltX,tiltY,ripple); val dx=x-px
+                val x=xs[i]*w+shift; val y=pointY(i,waterY,amp,phase,tiltX,tiltY,ripple,velocityX,velocityY,density); val dx=x-px
                 edge.cubicTo(px+dx*0.45f,py,x-dx*0.45f,y,x,y); px=x; py=y
             }
             fill.set(edge); fill.lineTo(px,h); fill.lineTo(xs[0]*w+shift,h); fill.close()
         }
-        private fun pointY(index:Int,base:Float,amp:Float,phase:Float,tiltX:Float,tiltY:Float,ripple:Float):Float {
-            val wobble=1f+0.18f*sin(phase*2f*PI.toFloat()+index*1.7f+tiltX*0.85f)
-            return base+ys[index]*amp*wobble+xs[index]*tiltX*15f-tiltY*8f+ripple*5f*sin(index*2.3f+phase*8f)
+        private fun pointY(index:Int,base:Float,amp:Float,phase:Float,tiltX:Float,tiltY:Float,ripple:Float,velocityX:Float,velocityY:Float,density:Float):Float {
+            val wavePhase=phase*2f*PI.toFloat()+index*1.7f
+            val wobble=1f+0.18f*sin(wavePhase+tiltX*0.85f)
+            // Tilt creates a visible liquid slope; momentum bends the surface into travelling slosh crests.
+            val slope=xs[index]*tiltX*32f*density-tiltY*12f*density
+            val travelling=(velocityX*0.75f+velocityY*0.35f)*10f*density*sin(index*1.45f+phase*7.5f)
+            val rebound=ripple*8f*density*sin(index*2.3f+phase*8f)
+            return base+ys[index]*amp*wobble+slope+travelling+rebound
         }
     }
 }
