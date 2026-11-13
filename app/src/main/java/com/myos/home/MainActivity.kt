@@ -50,6 +50,152 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+
+/**
+ * A translucent body of water occupying a fixed fraction of the launcher viewport.
+ * Its free surface responds to gravity while the drawer scenery remains stationary.
+ */
+private class SloshWater(private val density: Float) {
+    var fill = 0.45f
+    private var theta = 0f
+    private var omega = 0f
+    private var target = 0f
+    private var phase = 0f
+    private val path = Path()
+    private val edge = Path()
+    private val px = FloatArray(8)
+    private val py = FloatArray(8)
+    private val qx = FloatArray(8)
+    private val qy = FloatArray(8)
+    private val matrix = Matrix()
+    private val gradient = LinearGradient(
+        0f, 0f, 0f, 1f,
+        Color.argb(92, 120, 235, 245),
+        Color.argb(158, 0, 170, 200),
+        Shader.TileMode.CLAMP
+    )
+    private val body = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = gradient }
+    private val soft = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.WHITE
+        strokeWidth = 6f * density
+        alpha = 70
+    }
+    private val foam = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.WHITE
+        strokeWidth = 2.5f * density
+        alpha = 190
+    }
+
+    val horizontalMotion: Float get() = kotlin.math.sin(theta).coerceIn(-1f, 1f)
+    val verticalMotion: Float get() = (1f - kotlin.math.cos(theta)).coerceIn(-1f, 1f)
+    val angularVelocity: Float get() = omega
+
+    /** Gravity vector in device coordinates; rotation-matrix row 3 or filtered accelerometer gravity. */
+    fun setGravity(ax: Float, ay: Float, az: Float) {
+        val magnitude = kotlin.math.sqrt(ax * ax + ay * ay + az * az)
+        if (magnitude < 1e-3f || kotlin.math.hypot(ax, ay) / magnitude < 0.25f) return
+        target = kotlin.math.atan2(-ax, ay)
+    }
+
+    fun kick(strength: Float) {
+        omega = (omega + strength.coerceIn(0f, 2f) * 4f).coerceIn(-9f, 9f)
+    }
+
+    fun step(dt: Float) {
+        var delta = target - theta
+        while (delta > Math.PI) delta -= (2f * Math.PI.toFloat())
+        while (delta < -Math.PI) delta += (2f * Math.PI.toFloat())
+        omega += (delta * 38f - omega * 4.2f) * dt
+        omega = omega.coerceIn(-9f, 9f)
+        theta += omega * dt
+        phase += dt * (1.6f + kotlin.math.abs(omega))
+    }
+
+    private fun area(d: Float, w: Float, h: Float, gx: Float, gy: Float): Float {
+        px[0] = 0f; py[0] = 0f
+        px[1] = w; py[1] = 0f
+        px[2] = w; py[2] = h
+        px[3] = 0f; py[3] = h
+        var count = 0
+        for (i in 0 until 4) {
+            val j = (i + 1) % 4
+            val da = (px[i] - w / 2f) * gx + (py[i] - h / 2f) * gy - d
+            val db = (px[j] - w / 2f) * gx + (py[j] - h / 2f) * gy - d
+            if (da >= 0f) { qx[count] = px[i]; qy[count] = py[i]; count++ }
+            if ((da >= 0f) != (db >= 0f)) {
+                val t = da / (da - db)
+                qx[count] = px[i] + (px[j] - px[i]) * t
+                qy[count] = py[i] + (py[j] - py[i]) * t
+                count++
+            }
+        }
+        var twiceArea = 0f
+        for (i in 0 until count) {
+            val j = (i + 1) % count
+            twiceArea += qx[i] * qy[j] - qx[j] * qy[i]
+        }
+        return kotlin.math.abs(twiceArea) * 0.5f
+    }
+
+    private fun buildPath(w: Float, h: Float) {
+        val gx = kotlin.math.sin(theta)
+        val gy = kotlin.math.cos(theta)
+        var low = -kotlin.math.hypot(w, h) * 0.5f
+        var high = -low
+        val targetArea = fill.coerceIn(0.05f, 0.95f) * w * h
+        repeat(16) {
+            val mid = (low + high) * 0.5f
+            if (area(mid, w, h, gx, gy) > targetArea) low = mid else high = mid
+        }
+        val d = (low + high) * 0.5f
+        val sx = w * 0.5f + gx * d
+        val sy = h * 0.5f + gy * d
+        val tx = gy
+        val ty = -gx
+        val extent = kotlin.math.hypot(w, h)
+        val amplitude = (2f + minOf(6f, kotlin.math.abs(omega) * 3f)) * density
+        path.rewind()
+        edge.rewind()
+        val segments = 80
+        for (i in 0..segments) {
+            val u = (i / segments.toFloat() * 2f - 1f) * extent
+            val offset = amplitude * (
+                kotlin.math.sin(u / (40f * density) + phase) * 0.7f +
+                kotlin.math.sin(u / (23f * density) - phase * 1.3f) * 0.3f
+            )
+            val x = sx + tx * u - gx * offset
+            val y = sy + ty * u - gy * offset
+            if (i == 0) { path.moveTo(x, y); edge.moveTo(x, y) }
+            else { path.lineTo(x, y); edge.lineTo(x, y) }
+        }
+        path.lineTo(sx + tx * extent + gx * extent, sy + ty * extent + gy * extent)
+        path.lineTo(sx - tx * extent + gx * extent, sy - ty * extent + gy * extent)
+        path.close()
+        matrix.setScale(1f, 420f * density)
+        matrix.postRotate(-Math.toDegrees(theta.toDouble()).toFloat())
+        matrix.postTranslate(sx, sy)
+        gradient.setLocalMatrix(matrix)
+    }
+
+    fun clipToWater(canvas: Canvas, w: Float, h: Float) {
+        buildPath(w, h)
+        canvas.clipPath(path)
+    }
+
+    fun draw(canvas: Canvas, w: Float, h: Float, alpha: Float) {
+        if (alpha <= 0.01f || w <= 0f || h <= 0f) return
+        buildPath(w, h)
+        body.alpha = (alpha * 255f).toInt().coerceIn(0, 255)
+        canvas.drawPath(path, body)
+        soft.alpha = (70f * alpha).toInt().coerceIn(0, 70)
+        foam.alpha = (190f * alpha).toInt().coerceIn(0, 190)
+        canvas.drawPath(edge, soft)
+        canvas.drawPath(edge, foam)
+    }
+}
+
 class MainActivity : Activity() {
     private lateinit var launcherView: LauncherView
 
@@ -225,6 +371,7 @@ class MainActivity : Activity() {
             textSize = 13f * scaledDensity
         }
         private val wave = WaveShape()
+        private val slosh = SloshWater(density)
         private var homeWaterline = 0f
         private var fadeShader: LinearGradient? = null
         private var tintShader: LinearGradient? = null
@@ -258,6 +405,7 @@ class MainActivity : Activity() {
                         // around roll=-77°, pitch=43°).
                         latestRoll = kotlin.math.asin(rotationMatrix[6].coerceIn(-1f, 1f))
                         latestPitch = kotlin.math.asin(rotationMatrix[7].coerceIn(-1f, 1f))
+                        slosh.setGravity(rotationMatrix[6], rotationMatrix[7], rotationMatrix[8])
                         updateTilt()
                     }
                     Sensor.TYPE_LINEAR_ACCELERATION -> detectShake(event.values[0],event.values[1],event.values[2])
@@ -268,6 +416,7 @@ class MainActivity : Activity() {
                         val linearX=event.values[0]-gravity[0]
                         val linearY=event.values[1]-gravity[1]
                         val linearZ=event.values[2]-gravity[2]
+                        slosh.setGravity(gravity[0], gravity[1], gravity[2])
                         // Use the accelerometer for shake detection even when a rotation-vector sensor exists.
                         detectShake(linearX,linearY,linearZ)
                         if(rotationSensor==null) {
@@ -307,6 +456,9 @@ class MainActivity : Activity() {
             if(lastPhysicsFrame==0L) { lastPhysicsFrame=now; return }
             val dt=((now-lastPhysicsFrame)/1000f).coerceIn(0.001f,0.04f)
             lastPhysicsFrame=now
+            slosh.step(dt)
+            motionX = slosh.horizontalMotion
+            motionY = slosh.verticalMotion
             val stiffness=18f
             val damping=6.4f
             val ax=(targetMotionX-motionX)*stiffness-motionVelocityX*damping
@@ -323,6 +475,7 @@ class MainActivity : Activity() {
                 lastShakeAt=now
                 shakeKickAt=now
                 shakeStrength=(magnitude/15f).coerceIn(0.7f,1.7f)
+                slosh.kick(shakeStrength)
                 // A shake injects momentum into the liquid; the spring and damping do the rest.
                 motionVelocityX=(motionVelocityX+x*0.045f).coerceIn(-3.2f,3.2f)
                 motionVelocityY=(motionVelocityY+y*0.045f-z*0.018f).coerceIn(-3.2f,3.2f)
@@ -766,47 +919,20 @@ class MainActivity : Activity() {
         }
 
         private fun drawWater(canvas: Canvas) {
-            canvas.save()
-            val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
-            val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
-            // Only the liquid layer follows tilt and shake. The drawer scenery remains fixed.
-            canvas.translate(motionX*14f*density+shake*2.5f*density,motionY*8f*density)
-            if (!weatherConfirmed) {
-                canvas.drawPath(wave.fill, neutralWaterPaint)
-            } else {
-                val waterPaint = drawerWaterPaint.takeIf { drawerWaterShader != null }
-                    ?: photoPaint.takeIf { photoShader != null }
-                if (waterPaint == null) {
-                    canvas.drawPath(wave.fill, fallbackWaterPaint)
-                } else {
-                    waterPaint.alpha = 224
-                    canvas.drawPath(wave.fill, waterPaint)
-                    waterPaint.alpha = 255
-                    tintPaint.alpha = (30f * drawerProgress).toInt().coerceIn(0, 30)
-                    canvas.drawPath(wave.fill, tintPaint)
-                }
-            }
-            drawStreaks(canvas, width.toFloat(), height.toFloat(), drawerProgress)
-            canvas.save()
-            canvas.translate(0f, 6f * density)
-            canvas.drawPath(wave.edge, softFoamPaint)
-            canvas.restore()
-            canvas.drawPath(wave.edge, foamPaint)
-            canvas.restore()
+            // The drawer's scenery is static. This is a translucent, gravity-aligned
+            // water volume with a fixed 45% fill level and an independently sloshing surface.
+            slosh.draw(canvas, width.toFloat(), height.toFloat(), drawerProgress)
         }
 
         private fun drawWaterLife(canvas:Canvas) {
             if(!weatherConfirmed || raftAnimator?.isRunning!=true || drawerProgress<0.85f) return
             val now=(SystemClock.uptimeMillis()-raftStartTime)/1000f; val w=width.toFloat(); val h=height.toFloat()
             canvas.save()
-            val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
-            val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
-            canvas.translate(motionX*14f*density+shake*2.5f*density,motionY*8f*density)
-            canvas.clipPath(wave.fill)
+            slosh.clipToWater(canvas, w, h)
             for(i in 0 until 19) {
                 val seed=i*0.618f; val progress=(now*(0.055f+(i%5)*0.012f)+seed)%1.18f
                 val x=(0.08f+((i*37)%83)/100f)*w+sin(now*1.3f+seed*9f)*7f*density
-                val y=h*(1.08f-progress); val radius=(1.7f+(i%4)*0.8f)*density
+                val y=h*(1f-slosh.fill*(0.08f+progress*0.92f)); val radius=(1.7f+(i%4)*0.8f)*density
                 lifePaint.style=Paint.Style.STROKE; lifePaint.strokeWidth=1f*density; lifePaint.color=Color.argb(75+(i%4)*18,224,250,255)
                 canvas.drawCircle(x,y,radius,lifePaint); lifePaint.style=Paint.Style.FILL; lifePaint.color=Color.argb(105,255,255,255)
                 canvas.drawCircle(x-radius*0.35f,y-radius*0.35f,radius*0.22f,lifePaint)
@@ -815,7 +941,7 @@ class MainActivity : Activity() {
                 val seed=i*0.731f; val direction=if(i%2==0) 1f else -1f; val speed=10f+(i%4)*4f
                 val travel=now*speed*direction+seed*w*1.8f; val span=w+70f*density
                 val x=((travel%span)+span)%span-35f*density
-                val y=h*(0.24f+(i%5)*0.145f)+sin(now*0.7f+seed*8f)*9f*density
+                val y=h*(1f-slosh.fill*(0.12f+(i%5)*0.16f))+sin(now*0.7f+seed*8f)*9f*density
                 val size=(10f+(i%3)*2.5f)*density; val wag=sin(now*5f+seed*11f)*size*0.22f
                 val saved=canvas.save(); canvas.translate(x,y); canvas.scale(direction,1f)
                 val body=Path().apply { moveTo(-size*0.48f,0f); cubicTo(-size*0.22f,-size*0.42f,size*0.34f,-size*0.35f,size*0.48f,0f); cubicTo(size*0.30f,size*0.34f,-size*0.22f,size*0.40f,-size*0.48f,0f); close() }
@@ -950,16 +1076,14 @@ class MainActivity : Activity() {
             val h = height.toFloat()
             val w = width.toFloat()
             // The water rises as its own element but keeps a visible surface when fully open.
-            val waterY = h - drawerProgress * h * 0.82f
+            val waterY = h - drawerProgress * h * 1.08f
             val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
             val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
-            val amplitude=28f*density*sin(PI.toFloat()*drawerProgress)+7f*density*shake
-            wave.build(w,h,waterY,amplitude,drawerProgress,motionX,motionY,shake,motionVelocityX,motionVelocityY,density)
             if (drawerProgress < 1f) drawHome(canvas)
             // Reveal the stationary drawer environment only where the drawer has risen.
             // This keeps the home scene visible during the transition.
             canvas.save()
-            canvas.clipRect(0f, (waterY - 44f * density).coerceAtLeast(0f), w, h)
+            canvas.clipRect(0f, waterY.coerceAtLeast(0f), w, h)
             drawDrawerBackdrop(canvas)
             canvas.restore()
             drawWater(canvas)
