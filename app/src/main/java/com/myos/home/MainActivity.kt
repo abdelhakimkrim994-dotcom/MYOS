@@ -511,6 +511,13 @@ class MainActivity : Activity() {
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
             val target = if (open) 1f else 0f
             val start = currentProgress
+            if (open) {
+                neutralRoll = latestRoll
+                neutralPitch = latestPitch
+                hasNeutralPose = true
+            } else {
+                hasNeutralPose = false
+            }
             animator = ValueAnimator.ofFloat(start, target).apply {
                 duration = if (open) 520L else 420L
                 interpolator = if (open) {
@@ -624,8 +631,21 @@ class MainActivity : Activity() {
                 val saved=canvas.save(); canvas.translate(x,y); canvas.scale(direction,1f)
                 val body=Path().apply { moveTo(-size*0.48f,0f); cubicTo(-size*0.22f,-size*0.42f,size*0.34f,-size*0.35f,size*0.48f,0f); cubicTo(size*0.30f,size*0.34f,-size*0.22f,size*0.40f,-size*0.48f,0f); close() }
                 lifePaint.style=Paint.Style.FILL; lifePaint.color=fishColors[i%fishColors.size]; lifePaint.alpha=if(i<3) 175 else 220; canvas.drawPath(body,lifePaint)
-                val tail=Path().apply { moveTo(-size*0.42f,0f); lineTo(-size*0.78f,-size*0.27f+wag); lineTo(-size*0.75f,size*0.28f+wag); close() }
-                canvas.drawPath(tail,lifePaint); lifePaint.color=Color.WHITE; lifePaint.alpha=235; canvas.drawCircle(size*0.27f,-size*0.09f,size*0.055f,lifePaint)
+                val dorsal=Path().apply { moveTo(-size*0.18f,-size*0.22f); cubicTo(0f,-size*0.48f,size*0.28f,-size*0.42f,size*0.37f,-size*0.16f); close() }
+                canvas.drawPath(dorsal,lifePaint)
+                val ventral=Path().apply { moveTo(-size*0.05f,size*0.22f); lineTo(size*0.22f,size*0.34f+wag*0.12f); lineTo(size*0.27f,size*0.18f); close() }
+                canvas.drawPath(ventral,lifePaint)
+                val tail=Path().apply { moveTo(-size*0.40f,0f); cubicTo(-size*0.56f,-size*0.12f,-size*0.70f,-size*0.34f+wag,-size*0.88f,-size*0.30f+wag); cubicTo(-size*0.78f,wag*0.2f,-size*0.72f,size*0.30f+wag,-size*0.88f,size*0.32f+wag); cubicTo(-size*0.62f,size*0.25f,-size*0.50f,size*0.10f,-size*0.40f,0f); close() }
+                canvas.drawPath(tail,lifePaint)
+                weatherDetailPaint.color=Color.argb(100,18,43,54)
+                val pectoral=Path().apply { moveTo(size*0.02f,size*0.03f); lineTo(size*0.22f,size*0.27f+wag*0.1f); lineTo(size*0.30f,size*0.02f); close() }
+                canvas.drawPath(pectoral,weatherDetailPaint)
+                weatherDetailPaint.style=Paint.Style.STROKE; weatherDetailPaint.strokeWidth=0.65f*density
+                weatherDetailPaint.color=Color.argb(105,255,255,255)
+                canvas.drawLine(-size*0.18f,0f,size*0.28f,0f,weatherDetailPaint)
+                canvas.drawArc(size*0.12f,-size*0.18f,size*0.35f,size*0.18f,80f,190f,false,weatherDetailPaint)
+                weatherDetailPaint.style=Paint.Style.FILL
+                lifePaint.color=Color.WHITE; lifePaint.alpha=235; canvas.drawCircle(size*0.27f,-size*0.09f,size*0.055f,lifePaint)
                 lifePaint.color=Color.rgb(28,55,65); canvas.drawCircle(size*0.29f,-size*0.09f,size*0.027f,lifePaint); canvas.restoreToCount(saved)
             }
             if(weatherKind==WeatherKind.RAIN || weatherKind==WeatherKind.STORM) {
