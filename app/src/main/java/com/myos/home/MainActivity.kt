@@ -247,8 +247,12 @@ class MainActivity : Activity() {
                 when (event.sensor.type) {
                     Sensor.TYPE_GAME_ROTATION_VECTOR, Sensor.TYPE_ROTATION_VECTOR -> {
                         SensorManager.getRotationMatrixFromVector(rotationMatrix,event.values)
-                        SensorManager.getOrientation(rotationMatrix,orientationAngles)
-                        latestPitch=orientationAngles[1]; latestRoll=orientationAngles[2]; updateTilt()
+                        // Read gravity direction directly from the rotation matrix. Euler angles
+                        // become unreliable near steep phone orientations (the user's test was
+                        // around roll=-77°, pitch=43°).
+                        latestRoll = kotlin.math.asin(rotationMatrix[6].coerceIn(-1f, 1f))
+                        latestPitch = kotlin.math.asin(rotationMatrix[7].coerceIn(-1f, 1f))
+                        updateTilt()
                     }
                     Sensor.TYPE_LINEAR_ACCELERATION -> detectShake(event.values[0],event.values[1],event.values[2])
                     Sensor.TYPE_ACCELEROMETER -> {
@@ -270,10 +274,24 @@ class MainActivity : Activity() {
             }
         }
         private fun updateTilt() {
-            val tx=if(drawerProgress>=0.05f && hasNeutralPose) ((latestRoll-neutralRoll)/0.26f).coerceIn(-1f,1f) else (latestRoll/0.62f).coerceIn(-0.7f,0.7f)
-            val ty=if(drawerProgress>=0.05f && hasNeutralPose) ((latestPitch-neutralPitch)/0.26f).coerceIn(-1f,1f) else (latestPitch/0.62f).coerceIn(-0.7f,0.7f)
-            targetMotionX=tx
-            targetMotionY=ty
+            // Do not accumulate tilt while the drawer is hidden. Capture the phone's
+            // actual resting pose on the first sensor sample after the drawer appears.
+            if (drawerProgress < 0.05f) {
+                targetMotionX = 0f
+                targetMotionY = 0f
+                return
+            }
+            if (!hasNeutralPose) {
+                neutralRoll = latestRoll
+                neutralPitch = latestPitch
+                hasNeutralPose = true
+            }
+            // Let the neutral pose drift very slowly so ordinary hand movement remains
+            // responsive without permanently biasing the water after a long hold.
+            neutralRoll += (latestRoll - neutralRoll) * 0.004f
+            neutralPitch += (latestPitch - neutralPitch) * 0.004f
+            targetMotionX = ((latestRoll - neutralRoll) / 0.21f).coerceIn(-1f, 1f)
+            targetMotionY = ((latestPitch - neutralPitch) / 0.21f).coerceIn(-1f, 1f)
             postInvalidateOnAnimation()
         }
 
@@ -586,11 +604,7 @@ class MainActivity : Activity() {
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
             val target = if (open) 1f else 0f
             val start = currentProgress
-            if (open) {
-                neutralRoll = latestRoll
-                neutralPitch = latestPitch
-                hasNeutralPose = true
-            } else {
+            if (!open) {
                 hasNeutralPose = false
             }
             animator = ValueAnimator.ofFloat(start, target).apply {
