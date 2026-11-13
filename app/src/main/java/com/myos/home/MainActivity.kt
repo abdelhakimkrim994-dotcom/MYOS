@@ -122,6 +122,8 @@ class MainActivity : Activity() {
         private var downY = 0f
         private var lastY = 0f
         private var downProgress = 0f
+        private var gestureStartY = 0f
+        private var gestureStartProgress = 0f
         private var scrollY = 0f
         private var maxScroll = 0f
         private var velocityTracker: VelocityTracker? = null
@@ -209,16 +211,18 @@ class MainActivity : Activity() {
         }
 
         fun closeDrawer() {
-            if (drawerProgress <= 0f || isAnimating) return
+            if (drawerProgress <= 0f) return
             settleDrawer(false)
         }
 
         private fun settleDrawer(open: Boolean) {
+            val currentProgress = drawerProgress
             animator?.cancel()
+            drawerProgress = currentProgress
             isAnimating = true
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
             val target = if (open) 1f else 0f
-            val start = drawerProgress
+            val start = currentProgress
             animator = ValueAnimator.ofFloat(start, target).apply {
                 duration = if (open) 520L else 420L
                 interpolator = if (open) {
@@ -323,7 +327,10 @@ class MainActivity : Activity() {
                 val waterY = height - drawerProgress * height * 1.08f
                 val columnDelay = col * 12f * density
                 val reveal = ((centerY - waterY - columnDelay) / (120f * density)).coerceIn(0f, 1f)
-                if (reveal <= 0f) continue
+                if (reveal <= 0f) {
+                    hitRects[index].bounds.setEmpty()
+                    continue
+                }
 
                 val eased = reveal * reveal * (3f - 2f * reveal)
                 val alpha = (255f * eased).toInt()
@@ -382,13 +389,17 @@ class MainActivity : Activity() {
         override fun onTouchEvent(event: MotionEvent): Boolean {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    val currentProgress = drawerProgress
                     animator?.cancel()
+                    drawerProgress = currentProgress
                     isAnimating = false
                     setLayerType(View.LAYER_TYPE_NONE, null)
                     downX = event.x
                     downY = event.y
                     lastY = event.y
                     downProgress = drawerProgress
+                    gestureStartY = event.y
+                    gestureStartProgress = drawerProgress
                     velocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
                     gestureMode = when {
                         drawerProgress <= 0f -> GestureMode.OPENING
@@ -407,7 +418,7 @@ class MainActivity : Activity() {
                         }
                         GestureMode.CLOSING -> {
                             if (dy > 0f) {
-                                drawerProgress = (downProgress - dy / (height * 0.70f)).coerceIn(0f, 1f)
+                                drawerProgress = (gestureStartProgress - (event.y - gestureStartY) / (height * 0.70f)).coerceIn(0f, 1f)
                                 invalidate()
                             } else if (drawerProgress >= 0.999f && scrollY > 0f) {
                                 gestureMode = GestureMode.SCROLLING
@@ -417,7 +428,9 @@ class MainActivity : Activity() {
                             val delta = event.y - lastY
                             if (scrollY <= 0f && delta > 0f) {
                                 gestureMode = GestureMode.CLOSING
-                                drawerProgress = (1f - (event.y - downY) / (height * 0.70f)).coerceIn(0f, 1f)
+                                gestureStartY = event.y
+                                gestureStartProgress = 1f
+                                drawerProgress = 1f
                             } else {
                                 scrollY = (scrollY - delta).coerceIn(0f, maxScroll)
                             }
