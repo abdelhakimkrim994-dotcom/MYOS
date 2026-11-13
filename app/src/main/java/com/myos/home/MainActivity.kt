@@ -174,9 +174,11 @@ class MainActivity : Activity() {
                 val h = height.toFloat()
                 val crest = h * (1f - drawerProgress)
                 val amplitude = h * 0.035f * (1f - drawerProgress)
-                val reveal = Path().apply {
+                val waveEdge = Path().apply {
                     moveTo(0f, crest + amplitude)
                     cubicTo(w * 0.28f, crest - amplitude, w * 0.68f, crest + amplitude, w, crest - amplitude * 0.25f)
+                }
+                val reveal = Path(waveEdge).apply {
                     lineTo(w, h)
                     lineTo(0f, h)
                     close()
@@ -185,7 +187,29 @@ class MainActivity : Activity() {
                 canvas.clipPath(reveal)
                 drawDrawer(canvas)
                 canvas.restore()
+
+                // A restrained foam edge makes the reveal feel like one rising shoreline.
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 2.2f * resources.displayMetrics.density
+                paint.color = android.graphics.Color.argb(190, 255, 255, 255)
+                canvas.drawPath(waveEdge, paint)
+                paint.style = Paint.Style.FILL
             }
+        }
+
+        private fun drawOceanPhoto(canvas: Canvas): Boolean {
+            val photo = oceanPhoto ?: return false
+            val w = width.toFloat()
+            val h = height.toFloat()
+            // Use the identical crop on home and drawer so the ocean never jumps at the reveal.
+            val scale = max(w / photo.width, h / photo.height)
+            val drawW = photo.width * scale
+            val drawH = photo.height * scale
+            val left = (w - drawW) / 2f
+            val top = (h - drawH) / 2f
+            paint.alpha = 255
+            canvas.drawBitmap(photo, null, RectF(left, top, left + drawW, top + drawH), paint)
+            return true
         }
 
         private fun drawHome(canvas: Canvas) {
@@ -193,16 +217,7 @@ class MainActivity : Activity() {
             val w = width.toFloat()
             val h = height.toFloat()
 
-            val photo = oceanPhoto
-            if (photo != null) {
-                // Center-crop the original landscape reference to fill the portrait launcher.
-                val scale = max(w / photo.width, h / photo.height)
-                val drawW = photo.width * scale
-                val drawH = photo.height * scale
-                val left = (w - drawW) / 2f
-                val top = (h - drawH) / 2f
-                paint.alpha = 255
-                canvas.drawBitmap(photo, null, RectF(left, top, left + drawW, top + drawH), paint)
+            if (drawOceanPhoto(canvas)) {
                 // Keep the gesture hint subtle and readable over the turquoise water.
                 paint.color = android.graphics.Color.WHITE
                 paint.setShadowLayer(4f, 0f, 1f, android.graphics.Color.argb(110, 0, 45, 55))
@@ -244,11 +259,12 @@ class MainActivity : Activity() {
         }
 
         private fun drawDrawer(canvas: Canvas) {
-            canvas.drawColor(deepOcean)
             val w = width.toFloat()
             val h = height.toFloat()
-            paint.color = ocean
-            canvas.drawRect(0f, 0f, w, h * 0.22f, paint)
+            if (!drawOceanPhoto(canvas)) canvas.drawColor(deepOcean)
+            // A light blue veil keeps app icons legible without introducing a separate panel.
+            paint.color = android.graphics.Color.argb(105, 3, 35, 55)
+            canvas.drawRect(0f, 0f, w, h, paint)
 
             paint.color = android.graphics.Color.WHITE
             paint.textAlign = Paint.Align.CENTER
@@ -261,7 +277,7 @@ class MainActivity : Activity() {
             val horizontalPadding = w * 0.07f
             val cellWidth = (w - horizontalPadding * 2f) / columns
             val iconSize = min(cellWidth * 0.54f, 58f * resources.displayMetrics.density)
-            val top = h * 0.27f
+            val top = h * 0.23f
             val rowHeight = max(iconSize + 44f * resources.displayMetrics.density, h * 0.13f)
             val contentHeight = top + ((apps.size + columns - 1) / columns) * rowHeight + h * 0.05f
             maxScroll = max(0f, contentHeight - h)
