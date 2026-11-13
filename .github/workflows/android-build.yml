@@ -2,7 +2,7 @@ name: MYOS Android build
 
 on:
   push:
-    branches: [main]
+    branches: [main, design/ocean-wave-drawer]
   workflow_dispatch:
 
 permissions:
