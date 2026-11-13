@@ -63,6 +63,7 @@ class MainActivity : Activity() {
 
     private data class LaunchableApp(
         val label: String,
+        val displayLabel: String,
         val icon: Drawable,
         val packageName: String
     )
@@ -167,11 +168,14 @@ class MainActivity : Activity() {
                     apps.add(
                         LaunchableApp(
                             info.loadLabel(packageManager).toString(),
+                            info.loadLabel(packageManager).toString().let { if (it.length > 15) it.take(14) + "…" else it },
                             info.loadIcon(packageManager),
                             info.activityInfo.packageName
                         )
                     )
                 }
+            hitRects.clear()
+            apps.forEach { hitRects.add(HitRect(RectF(), it)) }
             calculateScrollBounds()
             invalidate()
         }
@@ -279,16 +283,16 @@ class MainActivity : Activity() {
         }
 
         private fun drawWater(canvas: Canvas) {
+            canvas.save()
+            canvas.clipPath(wave.fill)
             if (photo == null) {
                 canvas.drawColor(Color.rgb(14, 124, 140))
             } else {
-                canvas.save()
-                canvas.clipPath(wave.fill)
                 drawPhoto(canvas)
                 tintPaint.alpha = (115f * drawerProgress).toInt().coerceIn(0, 115)
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), tintPaint)
-                canvas.restore()
             }
+            canvas.restore()
 
             canvas.save()
             canvas.translate(0f, 6f * density)
@@ -306,8 +310,6 @@ class MainActivity : Activity() {
             val firstRowY = 0.19f * h
             val rowHeight = 104f * density
             val labelOffset = 13f * density
-            hitRects.clear()
-
             canvas.save()
             canvas.clipRect(0f, 0f, w, h)
             canvas.translate(0f, -scrollY)
@@ -347,15 +349,14 @@ class MainActivity : Activity() {
                 app.icon.alpha = 255
 
                 labelPaint.alpha = alpha
-                val label = if (app.label.length > 15) app.label.take(14) + "…" else app.label
-                canvas.drawText(label, centerX, cy + half + labelOffset, labelPaint)
+                canvas.drawText(app.displayLabel, centerX, cy + half + labelOffset, labelPaint)
 
                 val hitTop = cy - half - 8f * density
                 val hitBottom = cy + half + 34f * density
-                hitRects.add(HitRect(
-                    RectF(centerX - cellWidth * 0.46f, hitTop, centerX + cellWidth * 0.46f, hitBottom),
-                    app
-                ))
+                hitRects[index].bounds.set(
+                    centerX - cellWidth * 0.46f, hitTop,
+                    centerX + cellWidth * 0.46f, hitBottom
+                )
             }
             canvas.restore()
             labelPaint.alpha = 255
