@@ -138,6 +138,8 @@ class MainActivity : Activity() {
         private val weatherPrefs by lazy { this@MainActivity.getSharedPreferences("myos_weather", Context.MODE_PRIVATE) }
         private var permissionRequested = false
         private var weatherKind = WeatherKind.CLEAR
+        // Weather artwork stays hidden until a fresh API result or a still-valid cached result confirms both condition and day/night.
+        private var weatherConfirmed = false
         private var weatherLoading = false
         private val skyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val weatherDetailPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -157,6 +159,9 @@ class MainActivity : Activity() {
         private var drawerWaterShader: BitmapShader? = null
         private val fallbackWaterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(14, 124, 140)
+        }
+        private val neutralWaterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(190, 201, 199)
         }
         private var photoShader: BitmapShader? = null
         private val homeFadePaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -261,9 +266,16 @@ class MainActivity : Activity() {
         fun startWeatherUpdates() {
             val cached=weatherPrefs.getString("kind",null)
             val fetchedAt=weatherPrefs.getLong("fetched_at",0L)
-            cached?.let { runCatching { WeatherKind.valueOf(it) }.getOrNull()?.let { kind -> weatherKind=kind } }
+            val now=System.currentTimeMillis()
+            val cachedKind=cached?.let { runCatching { WeatherKind.valueOf(it) }.getOrNull() }
+            val cacheIsFresh=cachedKind!=null && fetchedAt>0L && now>=fetchedAt && now-fetchedAt<60L*60L*1000L
+
+            // Never show yesterday's sky or a default moon/sun while a new confirmation is pending.
+            weatherConfirmed=cacheIsFresh
+            if(cacheIsFresh) weatherKind=cachedKind!!
             invalidate()
-            if(System.currentTimeMillis()-fetchedAt<60L*60L*1000L) return
+
+            if(cacheIsFresh) return
             if(this@MainActivity.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED) loadWeatherFromLocation()
             else if(!permissionRequested) { permissionRequested=true; this@MainActivity.requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION),41) }
         }
@@ -304,9 +316,11 @@ class MainActivity : Activity() {
                     weatherLoading=false
                     result?.let {
                         weatherKind=it
+                        weatherConfirmed=true
                         weatherPrefs.edit().putString("kind",it.name).putLong("fetched_at",System.currentTimeMillis()).apply()
-                        invalidate()
                     }
+                    // A failed lookup intentionally leaves both scenes neutral.
+                    invalidate()
                 }
             }.apply { isDaemon=true; name="MYOS-weather" }.start()
         }
@@ -555,6 +569,11 @@ class MainActivity : Activity() {
         }
 
         private fun drawHome(canvas: Canvas) {
+            if (!weatherConfirmed) {
+                canvas.drawColor(ivory)
+                drawHint(canvas)
+                return
+            }
             canvas.drawColor(homeBackgroundColor())
             drawWeatherSky(canvas)
             if (photo != null) {
@@ -592,15 +611,20 @@ class MainActivity : Activity() {
             val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
             val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
             canvas.translate(motionX*4.5f*density+shake*2.5f*density,motionY*3.5f*density)
-            val waterPaint = drawerWaterPaint.takeIf { drawerWaterShader != null }
-                ?: photoPaint.takeIf { photoShader != null }
-            if (waterPaint == null) {
-                canvas.drawPath(wave.fill, fallbackWaterPaint)
+            if (!weatherConfirmed) {
+                // Keep the drawer calm and neutral until the matching weather/time scene is confirmed.
+                canvas.drawPath(wave.fill, neutralWaterPaint)
             } else {
-                canvas.drawPath(wave.fill, waterPaint)
-                // Keep the supplied turquoise water photo vivid rather than washing it out.
-                tintPaint.alpha = (42f * drawerProgress).toInt().coerceIn(0, 42)
-                canvas.drawPath(wave.fill, tintPaint)
+                val waterPaint = drawerWaterPaint.takeIf { drawerWaterShader != null }
+                    ?: photoPaint.takeIf { photoShader != null }
+                if (waterPaint == null) {
+                    canvas.drawPath(wave.fill, fallbackWaterPaint)
+                } else {
+                    canvas.drawPath(wave.fill, waterPaint)
+                    // Keep the supplied turquoise water photo vivid rather than washing it out.
+                    tintPaint.alpha = (42f * drawerProgress).toInt().coerceIn(0, 42)
+                    canvas.drawPath(wave.fill, tintPaint)
+                }
             }
             canvas.save()
             canvas.translate(0f, 6f * density)
@@ -611,7 +635,7 @@ class MainActivity : Activity() {
         }
 
         private fun drawWaterLife(canvas:Canvas) {
-            if(raftAnimator?.isRunning!=true || drawerProgress<0.85f) return
+            if(!weatherConfirmed || raftAnimator?.isRunning!=true || drawerProgress<0.85f) return
             val now=(SystemClock.uptimeMillis()-raftStartTime)/1000f; val w=width.toFloat(); val h=height.toFloat()
             canvas.save(); canvas.clipPath(wave.fill)
             for(i in 0 until 19) {
