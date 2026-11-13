@@ -1,8 +1,9 @@
-name: Android debug build
+name: MYOS old-content signing experiment
 
 on:
   push:
-    branches: [main]
+    branches:
+      - experiment/old-content-permanent-signing
   workflow_dispatch:
 
 permissions:
@@ -26,12 +27,36 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+      - name: Decode permanent signing key
+        env:
+          MYOS_KEYSTORE_BASE64: ${{ secrets.MYOS_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$MYOS_KEYSTORE_BASE64" || { echo "Missing MYOS_KEYSTORE_BASE64 repository secret"; exit 1; }
+          printf '%s' "$MYOS_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/myos-home-release.keystore"
+          test -s "$RUNNER_TEMP/myos-home-release.keystore"
 
-      - name: Upload debug APK
+      - name: Build old-content signed release APK
+        env:
+          MYOS_KEYSTORE_PATH: ${{ runner.temp }}/myos-home-release.keystore
+          MYOS_KEYSTORE_PASSWORD: ${{ secrets.MYOS_KEYSTORE_PASSWORD }}
+          MYOS_KEY_ALIAS: ${{ secrets.MYOS_KEY_ALIAS }}
+        run: |
+          test -n "$MYOS_KEYSTORE_PASSWORD" || { echo "Missing MYOS_KEYSTORE_PASSWORD repository secret"; exit 1; }
+          test -n "$MYOS_KEY_ALIAS" || { echo "Missing MYOS_KEY_ALIAS repository secret"; exit 1; }
+          gradle --no-daemon assembleRelease
+
+      - name: Verify permanent APK signature
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
+          grep -Fqi "2ba2b71dd7d8b4b76ab4c05926886f8bf2e21a42bf373d02a4d7ac0618f4fd7e" "$RUNNER_TEMP/apk-signature.txt"
+
+      - name: Upload experiment APK
         uses: actions/upload-artifact@v4
         with:
-          name: MYOS-Home-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: MYOS-Old-Content-Permanent-Signed
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
