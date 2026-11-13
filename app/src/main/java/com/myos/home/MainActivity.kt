@@ -118,15 +118,29 @@ class MainActivity : Activity() {
         private val density = resources.displayMetrics.density
         private val sensorManager = this@MainActivity.getSystemService(Context.SENSOR_SERVICE) as SensorManager
         private val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        private val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+            ?: sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        private val linearAcceleration = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
         private var motionX = 0f
         private var motionY = 0f
+        private var latestRoll = 0f
+        private var latestPitch = 0f
+        private var neutralRoll = 0f
+        private var neutralPitch = 0f
+        private var hasNeutralPose = false
+        private val rotationMatrix = FloatArray(9)
+        private val orientationAngles = FloatArray(3)
+        private val gravity = FloatArray(3)
+        private var gravityInitialized = false
         private var shakeKickAt = 0L
         private var lastShakeAt = 0L
+        private var shakeStrength = 1f
+        private val weatherPrefs by lazy { getSharedPreferences("myos_weather", Context.MODE_PRIVATE) }
         private var permissionRequested = false
         private var weatherKind = WeatherKind.CLEAR
         private var weatherLoading = false
-        private var weatherTint = Color.TRANSPARENT
-        private val weatherTintPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val skyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val weatherDetailPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val lifePaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val fishColors = intArrayOf(Color.rgb(255,132,65),Color.rgb(255,211,74),Color.rgb(79,205,190),Color.rgb(94,165,255),Color.rgb(255,112,145),Color.rgb(181,139,255))
         private val scaledDensity = resources.displayMetrics.scaledDensity
@@ -203,23 +217,55 @@ class MainActivity : Activity() {
         private val motionListener = object : SensorEventListener {
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
             override fun onSensorChanged(event: SensorEvent) {
-                if (event.sensor.type != Sensor.TYPE_ACCELEROMETER) return
-                val gx = (event.values[0] / 9.81f).coerceIn(-0.55f,0.55f)
-                val gy = (event.values[1] / 9.81f).coerceIn(-0.55f,0.55f)
-                motionX += (gx-motionX)*0.16f
-                motionY += (-gy-motionY)*0.16f
-                val magnitude = sqrt(event.values[0]*event.values[0]+event.values[1]*event.values[1]+event.values[2]*event.values[2])/9.81f
-                val now = SystemClock.uptimeMillis()
-                if (magnitude > 2.35f && now-lastShakeAt > 750L) { lastShakeAt=now; shakeKickAt=now }
-                invalidate()
+                when (event.sensor.type) {
+                    Sensor.TYPE_GAME_ROTATION_VECTOR, Sensor.TYPE_ROTATION_VECTOR -> {
+                        SensorManager.getRotationMatrixFromVector(rotationMatrix,event.values)
+                        SensorManager.getOrientation(rotationMatrix,orientationAngles)
+                        latestPitch=orientationAngles[1]; latestRoll=orientationAngles[2]; updateTilt()
+                    }
+                    Sensor.TYPE_LINEAR_ACCELERATION -> detectShake(event.values[0],event.values[1],event.values[2])
+                    Sensor.TYPE_ACCELEROMETER -> {
+                        val a=0.82f
+                        if(!gravityInitialized) { for(i in 0..2) gravity[i]=event.values[i]; gravityInitialized=true }
+                        else for(i in 0..2) gravity[i]=a*gravity[i]+(1f-a)*event.values[i]
+                        latestRoll=kotlin.math.atan2(gravity[0],gravity[2])
+                        latestPitch=kotlin.math.atan2(-gravity[1],sqrt(gravity[0]*gravity[0]+gravity[2]*gravity[2]))
+                        updateTilt()
+                        detectShake(event.values[0]-gravity[0],event.values[1]-gravity[1],event.values[2]-gravity[2])
+                    }
+                }
             }
         }
-        fun startMotionSensors() { accelerometer?.let { sensorManager.registerListener(motionListener,it,SensorManager.SENSOR_DELAY_GAME) } }
-        fun stopMotionSensors() { sensorManager.unregisterListener(motionListener); motionX*=0.35f; motionY*=0.35f }
+        private fun updateTilt() {
+            val tx=if(drawerProgress>=0.05f && hasNeutralPose) ((latestRoll-neutralRoll)/0.26f).coerceIn(-1f,1f) else (latestRoll/0.62f).coerceIn(-0.7f,0.7f)
+            val ty=if(drawerProgress>=0.05f && hasNeutralPose) ((latestPitch-neutralPitch)/0.26f).coerceIn(-1f,1f) else (latestPitch/0.62f).coerceIn(-0.7f,0.7f)
+            motionX+=(tx-motionX)*0.14f; motionY+=(ty-motionY)*0.14f
+            postInvalidateOnAnimation()
+        }
+        private fun detectShake(x:Float,y:Float,z:Float) {
+            val magnitude=sqrt(x*x+y*y+z*z); val now=SystemClock.uptimeMillis()
+            if(magnitude>12f && now-lastShakeAt>650L) {
+                lastShakeAt=now; shakeKickAt=now; shakeStrength=(magnitude/18f).coerceIn(0.65f,1.35f); invalidate()
+            }
+        }
+        fun startMotionSensors() {
+            sensorManager.unregisterListener(motionListener)
+            if(rotationSensor!=null) sensorManager.registerListener(motionListener,rotationSensor,SensorManager.SENSOR_DELAY_UI)
+            else accelerometer?.let { sensorManager.registerListener(motionListener,it,SensorManager.SENSOR_DELAY_UI) }
+            linearAcceleration?.let { sensorManager.registerListener(motionListener,it,SensorManager.SENSOR_DELAY_GAME) }
+        }
+        fun stopMotionSensors() {
+            sensorManager.unregisterListener(motionListener); motionX*=0.35f; motionY*=0.35f; hasNeutralPose=false
+        }
 
         fun startWeatherUpdates() {
-            if (this@MainActivity.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED) loadWeatherFromLocation()
-            else if (!permissionRequested) { permissionRequested=true; this@MainActivity.requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION),41) }
+            val cached=weatherPrefs.getString("kind",null)
+            val fetchedAt=weatherPrefs.getLong("fetched_at",0L)
+            cached?.let { runCatching { WeatherKind.valueOf(it) }.getOrNull()?.let { kind -> weatherKind=kind } }
+            invalidate()
+            if(System.currentTimeMillis()-fetchedAt<60L*60L*1000L) return
+            if(this@MainActivity.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED) loadWeatherFromLocation()
+            else if(!permissionRequested) { permissionRequested=true; this@MainActivity.requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION),41) }
         }
         fun loadWeatherFromLocation() {
             if (this@MainActivity.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED || weatherLoading) return
@@ -258,21 +304,46 @@ class MainActivity : Activity() {
                     weatherLoading=false
                     result?.let {
                         weatherKind=it
-                        weatherTint=when(it) {
-                            WeatherKind.CLEAR->Color.argb(18,255,205,112); WeatherKind.CLOUDS->Color.argb(36,183,197,202)
-                            WeatherKind.RAIN->Color.argb(64,55,112,145); WeatherKind.STORM->Color.argb(94,27,42,77)
-                            WeatherKind.SNOW->Color.argb(48,208,230,244); WeatherKind.FOG->Color.argb(58,190,202,197)
-                            WeatherKind.NIGHT->Color.argb(112,14,27,67)
-                        }
+                        weatherPrefs.edit().putString("kind",it.name).putLong("fetched_at",System.currentTimeMillis()).apply()
                         invalidate()
                     }
                 }
             }.apply { isDaemon=true; name="MYOS-weather" }.start()
         }
         private fun homeBackgroundColor():Int=when(weatherKind) {
-            WeatherKind.CLEAR->ivory; WeatherKind.CLOUDS->Color.rgb(239,241,237); WeatherKind.RAIN->Color.rgb(222,233,238)
-            WeatherKind.STORM->Color.rgb(37,49,68); WeatherKind.SNOW->Color.rgb(241,247,250); WeatherKind.FOG->Color.rgb(226,233,230)
-            WeatherKind.NIGHT->Color.rgb(20,31,54)
+            WeatherKind.CLEAR->ivory; WeatherKind.CLOUDS->Color.rgb(205,218,222); WeatherKind.RAIN->Color.rgb(116,145,158)
+            WeatherKind.STORM->Color.rgb(35,47,65); WeatherKind.SNOW->Color.rgb(218,231,239); WeatherKind.FOG->Color.rgb(184,197,193)
+            WeatherKind.NIGHT->Color.rgb(15,25,48)
+        }
+        private fun drawWeatherSky(canvas:Canvas) {
+            val top:Int; val bottom:Int
+            when(weatherKind) {
+                WeatherKind.CLEAR->{top=Color.rgb(126,205,231);bottom=Color.rgb(244,218,174)}
+                WeatherKind.CLOUDS->{top=Color.rgb(139,164,177);bottom=Color.rgb(207,211,203)}
+                WeatherKind.RAIN->{top=Color.rgb(67,91,111);bottom=Color.rgb(140,161,164)}
+                WeatherKind.STORM->{top=Color.rgb(24,34,53);bottom=Color.rgb(80,103,119)}
+                WeatherKind.SNOW->{top=Color.rgb(166,199,218);bottom=Color.rgb(230,237,237)}
+                WeatherKind.FOG->{top=Color.rgb(153,172,171);bottom=Color.rgb(211,218,208)}
+                WeatherKind.NIGHT->{top=Color.rgb(8,17,42);bottom=Color.rgb(43,65,91)}
+            }
+            skyPaint.shader=LinearGradient(0f,0f,0f,homeWaterline,top,bottom,Shader.TileMode.CLAMP)
+            canvas.drawRect(0f,0f,width.toFloat(),homeWaterline+2f*density,skyPaint); skyPaint.shader=null
+            if(weatherKind==WeatherKind.CLEAR) {
+                weatherDetailPaint.color=Color.rgb(255,232,166)
+                canvas.drawCircle(width*0.76f,homeWaterline*0.38f,20f*density,weatherDetailPaint)
+            } else if(weatherKind==WeatherKind.NIGHT) {
+                weatherDetailPaint.color=Color.rgb(239,241,228); canvas.drawCircle(width*0.76f,homeWaterline*0.38f,14f*density,weatherDetailPaint)
+                weatherDetailPaint.color=Color.rgb(24,39,65); canvas.drawCircle(width*0.76f+6f*density,homeWaterline*0.38f-4f*density,13f*density,weatherDetailPaint)
+                weatherDetailPaint.color=Color.argb(175,245,245,229)
+                for(i in 0 until 18) canvas.drawCircle(((i*73)%max(1,width)).toFloat(),(12+(i*41)%max(1,(homeWaterline*0.72f).toInt())).toFloat(),1f*density,weatherDetailPaint)
+            } else if(weatherKind!=WeatherKind.CLEAR) {
+                weatherDetailPaint.color=Color.argb(if(weatherKind==WeatherKind.STORM) 155 else 110,224,232,231)
+                for(i in 0 until 4) {
+                    val cx=width*(0.12f+i*0.25f); val cy=homeWaterline*(0.24f+(i%2)*0.13f); val r=(18f+(i%3)*5f)*density
+                    canvas.drawCircle(cx,cy,r,weatherDetailPaint); canvas.drawCircle(cx+r*0.8f,cy-r*0.25f,r*0.82f,weatherDetailPaint)
+                    canvas.drawCircle(cx+r*1.5f,cy,r*0.68f,weatherDetailPaint)
+                }
+            }
         }
 
 
@@ -478,6 +549,7 @@ class MainActivity : Activity() {
 
         private fun drawHome(canvas: Canvas) {
             canvas.drawColor(homeBackgroundColor())
+            drawWeatherSky(canvas)
             if (photo != null) {
                 canvas.save()
                 canvas.clipRect(0f, homeWaterline, width.toFloat(), height.toFloat())
@@ -485,7 +557,6 @@ class MainActivity : Activity() {
                 canvas.translate(-motionX*10f*density,motionY*8f*density)
                 drawPhoto(canvas)
                 canvas.restore()
-                if(weatherTint!=Color.TRANSPARENT) { weatherTintPaint.color=weatherTint; canvas.drawRect(0f,homeWaterline,width.toFloat(),height.toFloat(),weatherTintPaint) }
                 canvas.restore()
                 homeFadePaint.shader = fadeShader
                 canvas.drawRect(0f, homeWaterline, width.toFloat(), homeWaterline + 48f * density, homeFadePaint)
@@ -512,8 +583,8 @@ class MainActivity : Activity() {
         private fun drawWater(canvas: Canvas) {
             canvas.save()
             val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
-            val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/850f).coerceIn(0f,1f)
-            canvas.translate(motionX*17f*density+shake*5f*density,motionY*12f*density)
+            val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
+            canvas.translate(motionX*4.5f*density+shake*2.5f*density,motionY*3.5f*density)
             val waterPaint = drawerWaterPaint.takeIf { drawerWaterShader != null }
                 ?: photoPaint.takeIf { photoShader != null }
             if (waterPaint == null) {
@@ -524,7 +595,6 @@ class MainActivity : Activity() {
                 tintPaint.alpha = (42f * drawerProgress).toInt().coerceIn(0, 42)
                 canvas.drawPath(wave.fill, tintPaint)
             }
-            if(weatherTint!=Color.TRANSPARENT) { weatherTintPaint.color=weatherTint; weatherTintPaint.alpha=(Color.alpha(weatherTint)*drawerProgress).toInt(); canvas.drawPath(wave.fill,weatherTintPaint) }
             canvas.save()
             canvas.translate(0f, 6f * density)
             canvas.drawPath(wave.edge, softFoamPaint)
@@ -624,8 +694,8 @@ class MainActivity : Activity() {
                     raftY = bob * 13f * density * raftGain
                     raftRotation = tilt * 4.2f * raftGain
                 }
-                val drawCenterX=centerX+raftX+motionX*2.2f*density
-                val drawCy=cy+raftY+motionY*2.2f*density
+                val drawCenterX=centerX+raftX+motionX*1.0f*density
+                val drawCy=cy+raftY+motionY*1.0f*density
                 val half = iconSize * scale / 2f
 
                 val groupSave = canvas.save()
@@ -671,9 +741,9 @@ class MainActivity : Activity() {
             val w = width.toFloat()
             val waterY = h - drawerProgress * h * 1.08f
             val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
-            val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/850f).coerceIn(0f,1f)
-            val amplitude=28f*density*sin(PI.toFloat()*drawerProgress)+14f*density*shake
-            wave.build(w, h, waterY, amplitude, drawerProgress)
+            val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
+            val amplitude=28f*density*sin(PI.toFloat()*drawerProgress)+7f*density*shake
+            wave.build(w,h,waterY,amplitude,drawerProgress,motionX,motionY,shake)
             if (drawerProgress < 1f) drawHome(canvas)
             drawWater(canvas)
             drawWaterLife(canvas)
@@ -790,33 +860,20 @@ class MainActivity : Activity() {
         val edge = Path()
         val fill = Path()
 
-        fun build(w: Float, h: Float, waterY: Float, amp: Float, phase: Float) {
-            val shift = phase * 0.06f * w
+        fun build(w:Float,h:Float,waterY:Float,amp:Float,phase:Float,tiltX:Float,tiltY:Float,ripple:Float) {
+            val shift=phase*0.06f*w+tiltX*5f
             edge.rewind()
-            var previousX = xs[0] * w + shift
-            var previousY = pointY(0, waterY, amp, phase)
-            edge.moveTo(previousX, previousY)
-            for (i in 1 until xs.size) {
-                val x = xs[i] * w + shift
-                val y = pointY(i, waterY, amp, phase)
-                val dx = x - previousX
-                edge.cubicTo(
-                    previousX + dx * 0.45f, previousY,
-                    x - dx * 0.45f, y,
-                    x, y
-                )
-                previousX = x
-                previousY = y
+            var px=xs[0]*w+shift; var py=pointY(0,waterY,amp,phase,tiltX,tiltY,ripple)
+            edge.moveTo(px,py)
+            for(i in 1 until xs.size) {
+                val x=xs[i]*w+shift; val y=pointY(i,waterY,amp,phase,tiltX,tiltY,ripple); val dx=x-px
+                edge.cubicTo(px+dx*0.45f,py,x-dx*0.45f,y,x,y); px=x; py=y
             }
-            fill.set(edge)
-            fill.lineTo(previousX, h)
-            fill.lineTo(xs[0] * w + shift, h)
-            fill.close()
+            fill.set(edge); fill.lineTo(px,h); fill.lineTo(xs[0]*w+shift,h); fill.close()
         }
-
-        private fun pointY(index: Int, baseline: Float, amplitude: Float, phase: Float): Float {
-            val wobble = 1f + 0.18f * sin(phase * 2f * PI.toFloat() + index * 1.7f)
-            return baseline + ys[index] * amplitude * wobble
+        private fun pointY(index:Int,base:Float,amp:Float,phase:Float,tiltX:Float,tiltY:Float,ripple:Float):Float {
+            val wobble=1f+0.18f*sin(phase*2f*PI.toFloat()+index*1.7f+tiltX*0.85f)
+            return base+ys[index]*amp*wobble+xs[index]*tiltX*15f-tiltY*8f+ripple*5f*sin(index*2.3f+phase*8f)
         }
     }
 }
