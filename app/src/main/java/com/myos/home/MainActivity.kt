@@ -1,5 +1,6 @@
 package com.myos.home
 
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ResolveInfo
@@ -79,6 +80,9 @@ class MainActivity : Activity() {
         private val iconRects = mutableListOf<Pair<RectF, LaunchableApp>>()
         private val wavePath = Path()
         private val oceanPhoto: Bitmap? = loadOceanPhoto()
+        private var drawerProgress = 0f
+        private var drawerAnimator: ValueAnimator? = null
+        private var isAnimatingDrawer = false
 
         private fun loadOceanPhoto(): Bitmap? = try {
             assets.open("myos_ocean.jpg").use { BitmapFactory.decodeStream(it) }
@@ -123,20 +127,65 @@ class MainActivity : Activity() {
         }
 
         fun closeDrawer() {
-            isDrawerOpen = false
-            scrollY = 0f
-            invalidate()
+            if (isAnimatingDrawer || !isDrawerOpen) return
+            animateDrawer(1f, 0f, opening = false)
         }
 
         private fun openDrawer() {
-            isDrawerOpen = true
+            if (isAnimatingDrawer || isDrawerOpen) return
             scrollY = 0f
-            invalidate()
+            animateDrawer(0f, 1f, opening = true)
+        }
+
+        private fun animateDrawer(from: Float, to: Float, opening: Boolean) {
+            drawerAnimator?.cancel()
+            isAnimatingDrawer = true
+            drawerProgress = from
+            drawerAnimator = ValueAnimator.ofFloat(from, to).apply {
+                duration = 560L
+                interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+                addUpdateListener {
+                    drawerProgress = it.animatedValue as Float
+                    invalidate()
+                }
+                addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        drawerProgress = to
+                        isDrawerOpen = opening
+                        if (!opening) scrollY = 0f
+                        isAnimatingDrawer = false
+                        invalidate()
+                    }
+                })
+                start()
+            }
         }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            if (isDrawerOpen) drawDrawer(canvas) else drawHome(canvas)
+            if (isDrawerOpen && !isAnimatingDrawer) {
+                drawDrawer(canvas)
+                return
+            }
+
+            drawHome(canvas)
+            if (drawerProgress > 0f) {
+                val w = width.toFloat()
+                val h = height.toFloat()
+                val crest = h * (1f - drawerProgress)
+                val amplitude = h * 0.035f * (1f - drawerProgress)
+                val reveal = Path().apply {
+                    moveTo(0f, crest + amplitude)
+                    cubicTo(w * 0.28f, crest - amplitude, w * 0.68f, crest + amplitude, w, crest - amplitude * 0.25f)
+                    lineTo(w, h)
+                    lineTo(0f, h)
+                    close()
+                }
+                canvas.save()
+                canvas.clipPath(reveal)
+                drawDrawer(canvas)
+                canvas.restore()
+            }
         }
 
         private fun drawHome(canvas: Canvas) {
@@ -262,7 +311,7 @@ class MainActivity : Activity() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dy = event.y - lastY
-                    if (isDrawerOpen && downY > height * 0.2f) {
+                    if (isDrawerOpen && !isAnimatingDrawer && downY > height * 0.2f) {
                         scrollY = (scrollY - dy).coerceIn(0f, maxScroll)
                         invalidate()
                     }
@@ -272,6 +321,7 @@ class MainActivity : Activity() {
                 MotionEvent.ACTION_UP -> {
                     val dx = event.x - downX
                     val dy = event.y - downY
+                    if (isAnimatingDrawer) return true
                     if (abs(dy) > 70f && abs(dy) > abs(dx) * 1.2f) {
                         if (!isDrawerOpen && dy < 0f) openDrawer()
                         else if (isDrawerOpen && dy > 0f && (scrollY <= 0f || downY < height * 0.2f)) closeDrawer()
