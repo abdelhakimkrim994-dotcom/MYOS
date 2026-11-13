@@ -135,7 +135,7 @@ class MainActivity : Activity() {
         private var shakeKickAt = 0L
         private var lastShakeAt = 0L
         private var shakeStrength = 1f
-        private val weatherPrefs by lazy { getSharedPreferences("myos_weather", Context.MODE_PRIVATE) }
+        private val weatherPrefs by lazy { this@MainActivity.getSharedPreferences("myos_weather", Context.MODE_PRIVATE) }
         private var permissionRequested = false
         private var weatherKind = WeatherKind.CLEAR
         private var weatherLoading = false
