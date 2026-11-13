@@ -21,10 +21,12 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.LinearInterpolator
 import android.view.animation.PathInterpolator
 import kotlin.math.PI
 import kotlin.math.abs
@@ -68,7 +70,10 @@ class MainActivity : Activity() {
         val displayLabel: String,
         val icon: Drawable,
         val packageName: String
-    )
+    ) {
+        val raftSeed: Float =
+            ((packageName.hashCode() and 0x7fffffff) % 1000) / 1000f
+    }
 
     private enum class GestureMode { NONE, OPENING, CLOSING, SCROLLING }
 
@@ -130,6 +135,10 @@ class MainActivity : Activity() {
         private var fadeShader: LinearGradient? = null
         private var tintShader: LinearGradient? = null
         private var animator: ValueAnimator? = null
+        private var raftAnimator: ValueAnimator? = null
+        private var raftGainAnimator: ValueAnimator? = null
+        private var raftGain = 0f
+        private var raftStartTime = 0L
         private var downX = 0f
         private var downY = 0f
         private var lastY = 0f
@@ -234,7 +243,55 @@ class MainActivity : Activity() {
             settleDrawer(false)
         }
 
+        private fun startRaftMotion() {
+            raftGainAnimator?.cancel()
+            raftGainAnimator = null
+            if (raftAnimator?.isRunning != true) {
+                raftStartTime = SystemClock.uptimeMillis()
+                raftAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = 10_000L
+                    repeatCount = ValueAnimator.INFINITE
+                    interpolator = LinearInterpolator()
+                    addUpdateListener { invalidate() }
+                    start()
+                }
+            }
+            animateRaftGain(1f, 900L, false)
+        }
+
+        private fun stopRaftMotion() {
+            if (raftAnimator == null && raftGain <= 0f) return
+            animateRaftGain(0f, 350L, true)
+        }
+
+        private fun animateRaftGain(target: Float, durationMs: Long, stopClock: Boolean) {
+            raftGainAnimator?.cancel()
+            raftGainAnimator = null
+            val gainAnimation = ValueAnimator.ofFloat(raftGain, target).apply {
+                duration = durationMs
+                interpolator = LinearInterpolator()
+                addUpdateListener {
+                    raftGain = it.animatedValue as Float
+                    invalidate()
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        if (raftGainAnimator === animation) {
+                            raftGainAnimator = null
+                            if (stopClock && raftGain <= 0.001f) {
+                                raftAnimator?.cancel()
+                                raftAnimator = null
+                            }
+                        }
+                    }
+                })
+            }
+            raftGainAnimator = gainAnimation
+            gainAnimation.start()
+        }
+
         private fun settleDrawer(open: Boolean) {
+            if (!open) stopRaftMotion()
             val currentProgress = drawerProgress
             animator?.cancel()
             drawerProgress = currentProgress
@@ -259,6 +316,7 @@ class MainActivity : Activity() {
                         if (!open) scrollY = 0f
                         isAnimating = false
                         setLayerType(View.LAYER_TYPE_NONE, null)
+                        if (open) startRaftMotion()
                         invalidate()
                     }
                 })
@@ -330,6 +388,12 @@ class MainActivity : Activity() {
             val firstRowY = 0.19f * h
             val rowHeight = 104f * density
             val labelOffset = 13f * density
+            val floating = raftGain > 0f && raftAnimator?.isRunning == true
+            val raftTime = if (floating) {
+                (SystemClock.uptimeMillis() - raftStartTime) / 1000f
+            } else {
+                0f
+            }
             canvas.save()
             canvas.clipRect(0f, 0f, w, h)
             canvas.translate(0f, -scrollY)
@@ -352,33 +416,54 @@ class MainActivity : Activity() {
                 val alpha = (255f * eased).toInt()
                 val scale = 0.92f + 0.08f * eased
                 val translateY = (1f - eased) * 24f * density
-                val cy = centerY + translateY
+                val app = apps[index]
+                var raftX = 0f
+                var raftY = 0f
+                var raftRotation = 0f
+                if (floating) {
+                    val seed = app.raftSeed
+                    val period = 5.5f + seed * 3f
+                    val driftPeriod = 9f + seed * 4f
+                    val phase = seed * 2f * PI.toFloat()
+                    val bob =
+                        0.65f * sin(2f * PI.toFloat() * raftTime / period + phase) +
+                        0.35f * sin(2f * PI.toFloat() * raftTime / (period * 1.7f) + phase * 1.7f)
+                    val drift = sin(2f * PI.toFloat() * raftTime / driftPeriod + phase * 0.6f)
+                    val tilt = sin(2f * PI.toFloat() * raftTime / (period * 1.3f) + phase * 2.3f)
+                    raftX = drift * 1.25f * density * raftGain
+                    raftY = bob * 2.5f * density * raftGain
+                    raftRotation = tilt * 0.7f * raftGain
+                }
+                val drawCenterX = centerX + raftX
+                val drawCy = cy + raftY
                 val half = iconSize * scale / 2f
 
-                tempOval.set(centerX - 18f * density, cy + half + 5f * density,
-                    centerX + 18f * density, cy + half + 11f * density)
+                val groupSave = canvas.save()
+                canvas.rotate(raftRotation, drawCenterX, drawCy + half + labelOffset * 0.5f)
+                tempOval.set(drawCenterX - 18f * density, drawCy + half + 5f * density,
+                    drawCenterX + 18f * density, drawCy + half + 11f * density)
                 iconShadowPaint.alpha = (26f * eased).toInt()
                 canvas.drawOval(tempOval, iconShadowPaint)
 
-                val app = apps[index]
-                val save = canvas.save()
-                canvas.translate(centerX, cy)
+                canvas.save()
+                canvas.translate(drawCenterX, drawCy)
                 canvas.scale(scale, scale)
                 app.icon.alpha = alpha
                 app.icon.setBounds((-iconSize / 2f).toInt(), (-iconSize / 2f).toInt(),
                     (iconSize / 2f).toInt(), (iconSize / 2f).toInt())
                 app.icon.draw(canvas)
-                canvas.restoreToCount(save)
+                canvas.restore()
                 app.icon.alpha = 255
 
                 labelPaint.alpha = alpha
-                canvas.drawText(app.displayLabel, centerX, cy + half + labelOffset, labelPaint)
+                canvas.drawText(app.displayLabel, drawCenterX, drawCy + half + labelOffset, labelPaint)
+                canvas.restoreToCount(groupSave)
 
-                val hitTop = cy - half - 8f * density
-                val hitBottom = cy + half + 34f * density
+                val hitTop = drawCy - half - 8f * density
+                val hitBottom = drawCy + half + 34f * density
                 hitRects[index].bounds.set(
-                    centerX - cellWidth * 0.46f, hitTop,
-                    centerX + cellWidth * 0.46f, hitBottom
+                    drawCenterX - cellWidth * 0.46f, hitTop,
+                    drawCenterX + cellWidth * 0.46f, hitBottom
                 )
             }
             canvas.restore()
@@ -421,6 +506,7 @@ class MainActivity : Activity() {
                         drawerProgress >= 0.999f -> GestureMode.SCROLLING
                         else -> GestureMode.CLOSING
                     }
+                    if (drawerProgress >= 0.999f) startRaftMotion()
                     return true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -442,6 +528,7 @@ class MainActivity : Activity() {
                         GestureMode.SCROLLING -> {
                             val delta = event.y - lastY
                             if (scrollY <= 0f && delta > 0f) {
+                                stopRaftMotion()
                                 gestureMode = GestureMode.CLOSING
                                 gestureStartY = event.y
                                 gestureStartProgress = 1f
