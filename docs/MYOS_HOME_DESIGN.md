@@ -10,7 +10,8 @@ The home screen is based on the user's chosen beach-and-ocean reference image:
 
 - A clean, predominantly white upper area.
 - A beautiful ocean wave or water scene covering the lower half.
-- The exact user-provided reference image is the visual target. Do not substitute generic beach photography without approval.
+- The exact user-provided reference image is the visual target: pale ivory sand fills the upper area, a natural foamy shoreline runs diagonally across the frame, and luminous turquoise water fills the lower area. Preserve this image and its natural color/texture; do not substitute generic beach photography or redraw it without approval.
+- The supplied reference is landscape (1536 × 1150). On a portrait phone, test a center-crop that keeps the diagonal shoreline and turquoise water prominent; adjust crop positioning only after checking on-device.
 - Keep the resting screen static and exceptionally minimal.
 - No default clock, search bar, widgets, or app-icon clutter.
 - A subtle “Swipe up to open” hint may be included if it does not compromise the composition.
