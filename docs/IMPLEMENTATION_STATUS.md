@@ -21,7 +21,7 @@ Committed in this milestone:
 - No APK has been generated or installed.
 - No Gradle build has been run in this environment.
 - No behavior has been verified on the user's phone.
-- The beach photograph selected by the user is not yet included. The current drawn wave is a temporary implementation, not a replacement for that reference.
+- The Kotlin home renderer now attempts to load the exact reference from `app/src/main/assets/myos_ocean.jpg`; it falls back to the temporary drawn wave if the asset is absent. The assets directory is prepared, but the JPG still needs to be uploaded there before the photo appears in an APK.
 - The app drawer's current icon layout is a first functional arrangement. Spacing, typography, scrolling, accessibility, and visual polish need device testing.
 - The Gradle plugin, Kotlin plugin, compile SDK, target SDK, and minimum SDK values are provisional. Confirm compatibility and current Android requirements before release.
 - Edge-to-edge and system-bar insets need testing, especially on newer Android versions.
