@@ -798,7 +798,11 @@ class MainActivity : Activity() {
         private fun drawWaterLife(canvas:Canvas) {
             if(!weatherConfirmed || raftAnimator?.isRunning!=true || drawerProgress<0.85f) return
             val now=(SystemClock.uptimeMillis()-raftStartTime)/1000f; val w=width.toFloat(); val h=height.toFloat()
-            canvas.save(); canvas.clipPath(wave.fill)
+            canvas.save()
+            val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
+            val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
+            canvas.translate(motionX*14f*density+shake*2.5f*density,motionY*8f*density)
+            canvas.clipPath(wave.fill)
             for(i in 0 until 19) {
                 val seed=i*0.618f; val progress=(now*(0.055f+(i%5)*0.012f)+seed)%1.18f
                 val x=(0.08f+((i*37)%83)/100f)*w+sin(now*1.3f+seed*9f)*7f*density
@@ -952,7 +956,12 @@ class MainActivity : Activity() {
             val amplitude=28f*density*sin(PI.toFloat()*drawerProgress)+7f*density*shake
             wave.build(w,h,waterY,amplitude,drawerProgress,motionX,motionY,shake,motionVelocityX,motionVelocityY,density)
             if (drawerProgress < 1f) drawHome(canvas)
+            // Reveal the stationary drawer environment only where the drawer has risen.
+            // This keeps the home scene visible during the transition.
+            canvas.save()
+            canvas.clipRect(0f, (waterY - 44f * density).coerceAtLeast(0f), w, h)
             drawDrawerBackdrop(canvas)
+            canvas.restore()
             drawWater(canvas)
             drawMotionDebug(canvas)
             drawWaterLife(canvas)
