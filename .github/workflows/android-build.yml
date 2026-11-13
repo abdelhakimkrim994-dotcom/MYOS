@@ -1,4 +1,4 @@
-name: Android debug build
+name: MYOS Android build
 
 on:
   push:
@@ -26,12 +26,36 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+      - name: Decode permanent signing key
+        env:
+          MYOS_KEYSTORE_BASE64: ${{ secrets.MYOS_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$MYOS_KEYSTORE_BASE64" || { echo "Missing MYOS_KEYSTORE_BASE64 repository secret"; exit 1; }
+          printf '%s' "$MYOS_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/myos-home-release.keystore"
+          test -s "$RUNNER_TEMP/myos-home-release.keystore"
 
-      - name: Upload debug APK
+      - name: Build signed release APK
+        env:
+          MYOS_KEYSTORE_PATH: ${{ runner.temp }}/myos-home-release.keystore
+          MYOS_KEYSTORE_PASSWORD: ${{ secrets.MYOS_KEYSTORE_PASSWORD }}
+          MYOS_KEY_ALIAS: ${{ secrets.MYOS_KEY_ALIAS }}
+        run: |
+          test -n "$MYOS_KEYSTORE_PASSWORD" || { echo "Missing MYOS_KEYSTORE_PASSWORD repository secret"; exit 1; }
+          test -n "$MYOS_KEY_ALIAS" || { echo "Missing MYOS_KEY_ALIAS repository secret"; exit 1; }
+          gradle --no-daemon assembleRelease
+
+      - name: Verify APK signature
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
+          grep -Fqi "2b:a2:b7:1d:d8:b4:b7:6a:b4:c0:59:26:88:6f:8b:f2:e2:1a:42:bf:37:3d:02:a4:d7:ac:06:18:f4:fd:7e" "$RUNNER_TEMP/apk-signature.txt"
+
+      - name: Upload signed release APK
         uses: actions/upload-artifact@v4
         with:
-          name: MYOS-Home-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: MYOS-Home-0.2.0
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
