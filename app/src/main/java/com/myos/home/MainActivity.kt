@@ -125,7 +125,6 @@ class MainActivity : Activity() {
         private var downX = 0f
         private var downY = 0f
         private var lastY = 0f
-        private var downProgress = 0f
         private var gestureStartY = 0f
         private var gestureStartProgress = 0f
         private var scrollY = 0f
@@ -326,7 +325,7 @@ class MainActivity : Activity() {
                 val columnFloat = if (col % 2 == 0) -10f else 10f
                 val centerY = firstRowY + row * rowHeight + columnFloat * density
                 val waterY = height - drawerProgress * height * 1.08f
-                val columnDelay = col * 12f * density
+                val columnDelay = col * 24f * density
                 val reveal = ((centerY - waterY - columnDelay) / (120f * density)).coerceIn(0f, 1f)
                 if (reveal <= 0f) {
                     hitRects[index].bounds.setEmpty()
@@ -398,7 +397,6 @@ class MainActivity : Activity() {
                     downX = event.x
                     downY = event.y
                     lastY = event.y
-                    downProgress = drawerProgress
                     gestureStartY = event.y
                     gestureStartProgress = drawerProgress
                     velocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
