@@ -68,6 +68,10 @@ class MainActivity : Activity() {
         val packageName: String
     )
 
+    private enum class GestureMode { NONE, OPENING, CLOSING, SCROLLING }
+
+    private data class HitRect(val bounds: RectF, val app: LaunchableApp)
+
     private inner class LauncherView : View(this@MainActivity) {
         var drawerProgress = 0f
             private set
@@ -133,9 +137,6 @@ class MainActivity : Activity() {
         private val tempOval = RectF()
         private val columns = 4
 
-        private enum class GestureMode { NONE, OPENING, CLOSING, SCROLLING }
-
-        private data class HitRect(val bounds: RectF, val app: LaunchableApp)
 
         private fun loadOceanPhoto(): Bitmap? = try {
             assets.open("myos_ocean.jpg").use { BitmapFactory.decodeStream(it) }
