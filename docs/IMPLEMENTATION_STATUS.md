@@ -12,6 +12,8 @@ Committed in this milestone:
 - Native Kotlin `MainActivity` registered for Android HOME and launcher intents.
 - Minimal static home scene with a white upper area and a stylised, drawn ocean wave below.
 - Swipe-up gesture to open the app drawer.
+- Original user-provided ocean photograph verified at `app/src/main/assets/myos_ocean.jpg` (Git blob `a69b86e9d4d20178cc01e82c06f1f7efe3d52e59`).
+- 560 ms decelerating rising-wave reveal that clips the app drawer into view; swipe down/Back closes it with the reverse reveal.
 - App discovery through launcher activities exposed by Android package visibility queries.
 - App icon/name rendering and launch-intent handling.
 - Swipe-down close behavior and Android Back handling.
@@ -32,7 +34,7 @@ Committed in this milestone:
 2. Build the project with a compatible JDK and Android SDK; fix all compiler and manifest issues.
 3. Generate a debug APK and install it on the phone.
 4. Verify HOME selection, app discovery/launching, gestures, Back behavior, system-bar insets, and rotation policy.
-5. Add the exact user-approved beach reference image and implement the rising-wave transition.
+5. Test the rising-wave transition on the phone and tune its duration/shape.
 6. Refine the floating icon layout based on real-device usability.
 
 ## Verification rule
