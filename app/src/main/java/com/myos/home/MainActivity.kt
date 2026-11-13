@@ -3,6 +3,8 @@ package com.myos.home
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ResolveInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
@@ -76,6 +78,13 @@ class MainActivity : Activity() {
         private var downTime = 0L
         private val iconRects = mutableListOf<Pair<RectF, LaunchableApp>>()
         private val wavePath = Path()
+        private val oceanPhoto: Bitmap? = loadOceanPhoto()
+
+        private fun loadOceanPhoto(): Bitmap? = try {
+            assets.open("myos_ocean.jpg").use { BitmapFactory.decodeStream(it) }
+        } catch (_: Exception) {
+            null
+        }
 
         init {
             isFocusable = true
@@ -134,8 +143,30 @@ class MainActivity : Activity() {
             canvas.drawColor(white)
             val w = width.toFloat()
             val h = height.toFloat()
-            val horizon = h * 0.53f
 
+            val photo = oceanPhoto
+            if (photo != null) {
+                // Center-crop the original landscape reference to fill the portrait launcher.
+                val scale = max(w / photo.width, h / photo.height)
+                val drawW = photo.width * scale
+                val drawH = photo.height * scale
+                val left = (w - drawW) / 2f
+                val top = (h - drawH) / 2f
+                paint.alpha = 255
+                canvas.drawBitmap(photo, null, RectF(left, top, left + drawW, top + drawH), paint)
+                // Keep the gesture hint subtle and readable over the turquoise water.
+                paint.color = android.graphics.Color.WHITE
+                paint.setShadowLayer(4f, 0f, 1f, android.graphics.Color.argb(110, 0, 45, 55))
+                paint.textAlign = Paint.Align.CENTER
+                paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                paint.textSize = 14f * resources.displayMetrics.scaledDensity
+                canvas.drawText("Swipe up to open", w / 2f, h * 0.91f, paint)
+                paint.clearShadowLayer()
+                return
+            }
+
+            // Temporary vector fallback remains available until the photo asset is bundled.
+            val horizon = h * 0.53f
             wavePath.reset()
             wavePath.moveTo(0f, horizon + h * 0.025f)
             wavePath.cubicTo(w * 0.25f, horizon - h * 0.055f, w * 0.53f, horizon + h * 0.09f, w, horizon - h * 0.015f)
