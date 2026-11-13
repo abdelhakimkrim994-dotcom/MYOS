@@ -3,6 +3,20 @@ package com.myos.home
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.os.Looper
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ResolveInfo
@@ -33,6 +47,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 class MainActivity : Activity() {
     private lateinit var launcherView: LauncherView
@@ -53,7 +68,22 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (::launcherView.isInitialized) launcherView.reloadApps()
+        if (::launcherView.isInitialized) {
+            launcherView.reloadApps()
+            launcherView.startMotionSensors()
+            launcherView.startWeatherUpdates()
+        }
+    }
+
+    override fun onPause() {
+        if (::launcherView.isInitialized) launcherView.stopMotionSensors()
+        super.onPause()
+    }
+
+    @Deprecated("Deprecated in Android API; retained for broad device compatibility")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 41 && ::launcherView.isInitialized && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) launcherView.loadWeatherFromLocation()
     }
 
     @Suppress("DEPRECATION")
@@ -85,6 +115,19 @@ class MainActivity : Activity() {
         val isDrawerOpen: Boolean get() = drawerProgress >= 0.999f
 
         private val density = resources.displayMetrics.density
+        private val sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        private val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        private var motionX = 0f
+        private var motionY = 0f
+        private var shakeKickAt = 0L
+        private var lastShakeAt = 0L
+        private var permissionRequested = false
+        private var weatherKind = WeatherKind.CLEAR
+        private var weatherLoading = false
+        private var weatherTint = Color.TRANSPARENT
+        private val weatherTintPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val lifePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val fishColors = intArrayOf(Color.rgb(255,132,65),Color.rgb(255,211,74),Color.rgb(79,205,190),Color.rgb(94,165,255),Color.rgb(255,112,145),Color.rgb(181,139,255))
         private val scaledDensity = resources.displayMetrics.scaledDensity
         private val ivory = Color.rgb(250, 248, 243)
         private val white = Color.WHITE
@@ -155,6 +198,82 @@ class MainActivity : Activity() {
         private var hitRects = ArrayList<HitRect>()
         private val tempOval = RectF()
         private val columns = 4
+        private enum class WeatherKind { CLEAR, CLOUDS, RAIN, STORM, SNOW, FOG, NIGHT }
+
+        private val motionListener = object : SensorEventListener {
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+            override fun onSensorChanged(event: SensorEvent) {
+                if (event.sensor.type != Sensor.TYPE_ACCELEROMETER) return
+                val gx = (event.values[0] / 9.81f).coerceIn(-0.55f,0.55f)
+                val gy = (event.values[1] / 9.81f).coerceIn(-0.55f,0.55f)
+                motionX += (gx-motionX)*0.16f
+                motionY += (-gy-motionY)*0.16f
+                val magnitude = sqrt(event.values[0]*event.values[0]+event.values[1]*event.values[1]+event.values[2]*event.values[2])/9.81f
+                val now = SystemClock.uptimeMillis()
+                if (magnitude > 2.35f && now-lastShakeAt > 750L) { lastShakeAt=now; shakeKickAt=now }
+                invalidate()
+            }
+        }
+        fun startMotionSensors() { accelerometer?.let { sensorManager.registerListener(motionListener,it,SensorManager.SENSOR_DELAY_GAME) } }
+        fun stopMotionSensors() { sensorManager.unregisterListener(motionListener); motionX*=0.35f; motionY*=0.35f }
+
+        fun startWeatherUpdates() {
+            if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED) loadWeatherFromLocation()
+            else if (!permissionRequested) { permissionRequested=true; this@MainActivity.requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION),41) }
+        }
+        fun loadWeatherFromLocation() {
+            if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED || weatherLoading) return
+            val manager=getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            var best: Location?=null
+            for (provider in listOf(LocationManager.NETWORK_PROVIDER,LocationManager.PASSIVE_PROVIDER)) {
+                try { val candidate=manager.getLastKnownLocation(provider); if(candidate!=null && (best==null || candidate.time>best!!.time)) best=candidate } catch(_:SecurityException) {}
+            }
+            if(best!=null) { fetchWeather(best!!.latitude,best!!.longitude); return }
+            try {
+                val listener=object:LocationListener {
+                    override fun onLocationChanged(location:Location) { try { manager.removeUpdates(this) } catch(_:Exception) {}; fetchWeather(location.latitude,location.longitude) }
+                    @Deprecated("Deprecated by Android") override fun onStatusChanged(provider:String?,status:Int,extras:android.os.Bundle?)=Unit
+                    override fun onProviderEnabled(provider:String)=Unit
+                    override fun onProviderDisabled(provider:String)=Unit
+                }
+                if(manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) manager.requestSingleUpdate(LocationManager.NETWORK_PROVIDER,listener,Looper.getMainLooper())
+                else if(manager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) manager.requestSingleUpdate(LocationManager.PASSIVE_PROVIDER,listener,Looper.getMainLooper())
+            } catch(_:Exception) {}
+        }
+        private fun fetchWeather(latitude:Double,longitude:Double) {
+            if(weatherLoading) return
+            weatherLoading=true
+            Thread {
+                var result:WeatherKind?=null
+                try {
+                    val endpoint="https://api.open-meteo.com/v1/forecast?latitude=$latitude&longitude=$longitude&current=weather_code,is_day&timezone=auto"
+                    val connection=URL(endpoint).openConnection() as HttpURLConnection
+                    connection.connectTimeout=9000; connection.readTimeout=9000
+                    val json=connection.inputStream.bufferedReader().use{it.readText()}; connection.disconnect()
+                    val current=JSONObject(json).getJSONObject("current")
+                    val code=current.optInt("weather_code",0); val day=current.optInt("is_day",1)==1
+                    result=when { !day->WeatherKind.NIGHT; code>=95->WeatherKind.STORM; code in 71..77 || code in 85..86->WeatherKind.SNOW; code in 51..67 || code in 80..82->WeatherKind.RAIN; code==45 || code==48->WeatherKind.FOG; code in 1..3->WeatherKind.CLOUDS; else->WeatherKind.CLEAR }
+                } catch(_:Exception) {}
+                runOnUiThread {
+                    weatherLoading=false
+                    result?.let {
+                        weatherKind=it
+                        weatherTint=when(it) {
+                            WeatherKind.CLEAR->Color.argb(18,255,205,112); WeatherKind.CLOUDS->Color.argb(36,183,197,202)
+                            WeatherKind.RAIN->Color.argb(64,55,112,145); WeatherKind.STORM->Color.argb(94,27,42,77)
+                            WeatherKind.SNOW->Color.argb(48,208,230,244); WeatherKind.FOG->Color.argb(58,190,202,197)
+                            WeatherKind.NIGHT->Color.argb(112,14,27,67)
+                        }
+                        invalidate()
+                    }
+                }
+            }.apply { isDaemon=true; name="MYOS-weather" }.start()
+        }
+        private fun homeBackgroundColor():Int=when(weatherKind) {
+            WeatherKind.CLEAR->ivory; WeatherKind.CLOUDS->Color.rgb(239,241,237); WeatherKind.RAIN->Color.rgb(222,233,238)
+            WeatherKind.STORM->Color.rgb(37,49,68); WeatherKind.SNOW->Color.rgb(241,247,250); WeatherKind.FOG->Color.rgb(226,233,230)
+            WeatherKind.NIGHT->Color.rgb(20,31,54)
+        }
 
 
         private fun loadOceanPhoto(): Bitmap? = try {
@@ -358,11 +477,15 @@ class MainActivity : Activity() {
         }
 
         private fun drawHome(canvas: Canvas) {
-            canvas.drawColor(ivory)
+            canvas.drawColor(homeBackgroundColor())
             if (photo != null) {
                 canvas.save()
                 canvas.clipRect(0f, homeWaterline, width.toFloat(), height.toFloat())
+                canvas.save()
+                canvas.translate(-motionX*10f*density,motionY*8f*density)
                 drawPhoto(canvas)
+                canvas.restore()
+                if(weatherTint!=Color.TRANSPARENT) { weatherTintPaint.color=weatherTint; canvas.drawRect(0f,homeWaterline,width.toFloat(),height.toFloat(),weatherTintPaint) }
                 canvas.restore()
                 homeFadePaint.shader = fadeShader
                 canvas.drawRect(0f, homeWaterline, width.toFloat(), homeWaterline + 48f * density, homeFadePaint)
@@ -380,12 +503,17 @@ class MainActivity : Activity() {
             val baseline = homeWaterline - 20f * density
             for (i in text.indices) {
                 val next = x + hintPaint.measureText(text, i, i + 1)
-                canvas.drawText(text, i, i + 1, x, baseline, hintPaint)
+                hintPaint.color=if(weatherKind==WeatherKind.STORM || weatherKind==WeatherKind.NIGHT) Color.argb(210,245,248,250) else Color.argb(179,108,119,119)
+                canvas.drawText(text,i,i+1,x,baseline,hintPaint)
                 x = next + letterSpacing
             }
         }
 
         private fun drawWater(canvas: Canvas) {
+            canvas.save()
+            val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
+            val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/850f).coerceIn(0f,1f)
+            canvas.translate(motionX*17f*density+shake*5f*density,motionY*12f*density)
             val waterPaint = drawerWaterPaint.takeIf { drawerWaterShader != null }
                 ?: photoPaint.takeIf { photoShader != null }
             if (waterPaint == null) {
@@ -396,12 +524,48 @@ class MainActivity : Activity() {
                 tintPaint.alpha = (42f * drawerProgress).toInt().coerceIn(0, 42)
                 canvas.drawPath(wave.fill, tintPaint)
             }
-
+            if(weatherTint!=Color.TRANSPARENT) { weatherTintPaint.color=weatherTint; weatherTintPaint.alpha=(Color.alpha(weatherTint)*drawerProgress).toInt(); canvas.drawPath(wave.fill,weatherTintPaint) }
             canvas.save()
             canvas.translate(0f, 6f * density)
             canvas.drawPath(wave.edge, softFoamPaint)
             canvas.restore()
             canvas.drawPath(wave.edge, foamPaint)
+            canvas.restore()
+        }
+
+        private fun drawWaterLife(canvas:Canvas) {
+            if(raftAnimator?.isRunning!=true || drawerProgress<0.85f) return
+            val now=(SystemClock.uptimeMillis()-raftStartTime)/1000f; val w=width.toFloat(); val h=height.toFloat()
+            canvas.save(); canvas.clipPath(wave.fill)
+            for(i in 0 until 19) {
+                val seed=i*0.618f; val progress=(now*(0.055f+(i%5)*0.012f)+seed)%1.18f
+                val x=(0.08f+((i*37)%83)/100f)*w+sin(now*1.3f+seed*9f)*7f*density
+                val y=h*(1.08f-progress); val radius=(1.7f+(i%4)*0.8f)*density
+                lifePaint.style=Paint.Style.STROKE; lifePaint.strokeWidth=1f*density; lifePaint.color=Color.argb(75+(i%4)*18,224,250,255)
+                canvas.drawCircle(x,y,radius,lifePaint); lifePaint.style=Paint.Style.FILL; lifePaint.color=Color.argb(105,255,255,255)
+                canvas.drawCircle(x-radius*0.35f,y-radius*0.35f,radius*0.22f,lifePaint)
+            }
+            for(i in 0 until 8) {
+                val seed=i*0.731f; val direction=if(i%2==0) 1f else -1f; val speed=10f+(i%4)*4f
+                val travel=now*speed*direction+seed*w*1.8f; val span=w+70f*density
+                val x=((travel%span)+span)%span-35f*density
+                val y=h*(0.24f+(i%5)*0.145f)+sin(now*0.7f+seed*8f)*9f*density
+                val size=(10f+(i%3)*2.5f)*density; val wag=sin(now*5f+seed*11f)*size*0.22f
+                val saved=canvas.save(); canvas.translate(x,y); canvas.scale(direction,1f)
+                val body=Path().apply { moveTo(-size*0.48f,0f); cubicTo(-size*0.22f,-size*0.42f,size*0.34f,-size*0.35f,size*0.48f,0f); cubicTo(size*0.30f,size*0.34f,-size*0.22f,size*0.40f,-size*0.48f,0f); close() }
+                lifePaint.style=Paint.Style.FILL; lifePaint.color=fishColors[i%fishColors.size]; lifePaint.alpha=if(i<3) 175 else 220; canvas.drawPath(body,lifePaint)
+                val tail=Path().apply { moveTo(-size*0.42f,0f); lineTo(-size*0.78f,-size*0.27f+wag); lineTo(-size*0.75f,size*0.28f+wag); close() }
+                canvas.drawPath(tail,lifePaint); lifePaint.color=Color.WHITE; lifePaint.alpha=235; canvas.drawCircle(size*0.27f,-size*0.09f,size*0.055f,lifePaint)
+                lifePaint.color=Color.rgb(28,55,65); canvas.drawCircle(size*0.29f,-size*0.09f,size*0.027f,lifePaint); canvas.restoreToCount(saved)
+            }
+            if(weatherKind==WeatherKind.RAIN || weatherKind==WeatherKind.STORM) {
+                lifePaint.style=Paint.Style.STROKE; lifePaint.strokeWidth=1.3f*density; lifePaint.color=Color.argb(if(weatherKind==WeatherKind.STORM) 105 else 70,218,239,248)
+                for(i in 0 until 24) { val x=((i*47f+now*(45f+i%5*9f))%(w+20f))-10f; val y=(i*71f+now*130f)%h; canvas.drawLine(x,y,x-3f*density,y+10f*density,lifePaint) }
+            } else if(weatherKind==WeatherKind.SNOW) {
+                lifePaint.style=Paint.Style.FILL; lifePaint.color=Color.argb(190,245,252,255)
+                for(i in 0 until 18) { val x=(i*59f+sin(now+i)*15f)%w; val y=(i*83f+now*24f)%h; canvas.drawCircle(x,y,(1.2f+i%3)*density,lifePaint) }
+            }
+            canvas.restore(); lifePaint.alpha=255
         }
 
         private fun drawApps(canvas: Canvas) {
@@ -460,8 +624,8 @@ class MainActivity : Activity() {
                     raftY = bob * 13f * density * raftGain
                     raftRotation = tilt * 4.2f * raftGain
                 }
-                val drawCenterX = centerX + raftX
-                val drawCy = cy + raftY
+                val drawCenterX=centerX+raftX+motionX*2.2f*density
+                val drawCy=cy+raftY+motionY*2.2f*density
                 val half = iconSize * scale / 2f
 
                 val groupSave = canvas.save()
@@ -506,10 +670,13 @@ class MainActivity : Activity() {
             val h = height.toFloat()
             val w = width.toFloat()
             val waterY = h - drawerProgress * h * 1.08f
-            val amplitude = 28f * density * sin(PI.toFloat() * drawerProgress)
+            val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
+            val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/850f).coerceIn(0f,1f)
+            val amplitude=28f*density*sin(PI.toFloat()*drawerProgress)+14f*density*shake
             wave.build(w, h, waterY, amplitude, drawerProgress)
             if (drawerProgress < 1f) drawHome(canvas)
             drawWater(canvas)
+            drawWaterLife(canvas)
             drawApps(canvas)
         }
 
