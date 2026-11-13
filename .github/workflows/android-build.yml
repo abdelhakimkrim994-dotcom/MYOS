@@ -1,4 +1,4 @@
-name: MYOS old-content signing experiment
+name: MYOS old-content temporary-signing experiment
 
 on:
   push:
@@ -27,36 +27,33 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Decode permanent signing key
-        env:
-          MYOS_KEYSTORE_BASE64: ${{ secrets.MYOS_KEYSTORE_BASE64 }}
+      - name: Generate temporary signing key and build release APK
         run: |
-          test -n "$MYOS_KEYSTORE_BASE64" || { echo "Missing MYOS_KEYSTORE_BASE64 repository secret"; exit 1; }
-          printf '%s' "$MYOS_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/myos-home-release.keystore"
-          test -s "$RUNNER_TEMP/myos-home-release.keystore"
-
-      - name: Build old-content signed release APK
-        env:
-          MYOS_KEYSTORE_PATH: ${{ runner.temp }}/myos-home-release.keystore
-          MYOS_KEYSTORE_PASSWORD: ${{ secrets.MYOS_KEYSTORE_PASSWORD }}
-          MYOS_KEY_ALIAS: ${{ secrets.MYOS_KEY_ALIAS }}
-        run: |
-          test -n "$MYOS_KEYSTORE_PASSWORD" || { echo "Missing MYOS_KEYSTORE_PASSWORD repository secret"; exit 1; }
-          test -n "$MYOS_KEY_ALIAS" || { echo "Missing MYOS_KEY_ALIAS repository secret"; exit 1; }
+          STORE="$RUNNER_TEMP/myos-temporary.keystore"
+          PASSWORD="$(openssl rand -hex 24)"
+          keytool -genkeypair -v \
+            -keystore "$STORE" \
+            -storepass "$PASSWORD" \
+            -keypass "$PASSWORD" \
+            -alias myos-temporary \
+            -keyalg RSA -keysize 3072 -validity 30 \
+            -dname "CN=MYOS Temporary Test, OU=Experiment, O=MYOS, C=DZ"
+          export MYOS_KEYSTORE_PATH="$STORE"
+          export MYOS_KEYSTORE_PASSWORD="$PASSWORD"
+          export MYOS_KEY_ALIAS="myos-temporary"
           gradle --no-daemon assembleRelease
 
-      - name: Verify permanent APK signature
+      - name: Verify temporary APK signature
         run: |
           APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
           test -n "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
-          grep -Fqi "2ba2b71dd7d8b4b76ab4c05926886f8bf2e21a42bf373d02a4d7ac0618f4fd7e" "$RUNNER_TEMP/apk-signature.txt"
 
-      - name: Upload experiment APK
+      - name: Upload temporary-signed experiment APK
         uses: actions/upload-artifact@v4
         with:
-          name: MYOS-Old-Content-Permanent-Signed
+          name: MYOS-Old-Content-Temporary-Signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
