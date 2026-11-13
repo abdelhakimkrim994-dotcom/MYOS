@@ -412,7 +412,7 @@ class MainActivity : Activity() {
                     val dy = event.y - downY
                     when (gestureMode) {
                         GestureMode.OPENING -> {
-                            drawerProgress = (downProgress - dy / (height * 0.70f)).coerceIn(0f, 1f)
+                            drawerProgress = (gestureStartProgress - (event.y - gestureStartY) / (height * 0.70f)).coerceIn(0f, 1f)
                             invalidate()
                         }
                         GestureMode.CLOSING -> {
