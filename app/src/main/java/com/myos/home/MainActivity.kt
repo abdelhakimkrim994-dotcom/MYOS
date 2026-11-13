@@ -115,7 +115,7 @@ class MainActivity : Activity() {
         val isDrawerOpen: Boolean get() = drawerProgress >= 0.999f
 
         private val density = resources.displayMetrics.density
-        private val sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        private val sensorManager = this@MainActivity.getSystemService(Context.SENSOR_SERVICE) as SensorManager
         private val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         private var motionX = 0f
         private var motionY = 0f
@@ -218,12 +218,12 @@ class MainActivity : Activity() {
         fun stopMotionSensors() { sensorManager.unregisterListener(motionListener); motionX*=0.35f; motionY*=0.35f }
 
         fun startWeatherUpdates() {
-            if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED) loadWeatherFromLocation()
+            if (this@MainActivity.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED) loadWeatherFromLocation()
             else if (!permissionRequested) { permissionRequested=true; this@MainActivity.requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION),41) }
         }
         fun loadWeatherFromLocation() {
-            if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED || weatherLoading) return
-            val manager=getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            if (this@MainActivity.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED || weatherLoading) return
+            val manager=this@MainActivity.getSystemService(Context.LOCATION_SERVICE) as LocationManager
             var best: Location?=null
             for (provider in listOf(LocationManager.NETWORK_PROVIDER,LocationManager.PASSIVE_PROVIDER)) {
                 try { val candidate=manager.getLastKnownLocation(provider); if(candidate!=null && (best==null || candidate.time>best!!.time)) best=candidate } catch(_:SecurityException) {}
