@@ -167,6 +167,12 @@ class MainActivity : Activity() {
         private val fallbackWaterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(14, 124, 140)
         }
+        private val drawerBackdropPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val backdropDetailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            color = Color.WHITE
+        }
         private val neutralWaterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(190, 201, 199)
         }
@@ -654,10 +660,8 @@ class MainActivity : Activity() {
             if (photo != null) {
                 canvas.save()
                 canvas.clipRect(0f, homeWaterline, width.toFloat(), height.toFloat())
-                canvas.save()
-                canvas.translate(-motionX*10f*density,motionY*8f*density)
+                // The home scenery is static; motion belongs to the drawer water layer.
                 drawPhoto(canvas)
-                canvas.restore()
                 canvas.restore()
                 homeFadePaint.shader = fadeShader
                 canvas.drawRect(0f, homeWaterline, width.toFloat(), homeWaterline + 48f * density, homeFadePaint)
@@ -732,14 +736,42 @@ class MainActivity : Activity() {
             c.drawText(line, x + padX, baseline, debugPaint)
         }
 
+        // Stationary underwater environment, separate from the animated water element.
+        private fun drawDrawerBackdrop(canvas: Canvas) {
+            val w = width.toFloat()
+            val h = height.toFloat()
+            val top = if (!weatherConfirmed) Color.rgb(18, 55, 69) else when (weatherKind) {
+                WeatherKind.NIGHT, WeatherKind.STORM -> Color.rgb(8, 35, 53)
+                WeatherKind.RAIN, WeatherKind.FOG, WeatherKind.CLOUDS -> Color.rgb(18, 66, 78)
+                WeatherKind.SNOW -> Color.rgb(47, 91, 104)
+                else -> Color.rgb(9, 78, 91)
+            }
+            val bottom = if (!weatherConfirmed) Color.rgb(25, 83, 91) else when (weatherKind) {
+                WeatherKind.NIGHT, WeatherKind.STORM -> Color.rgb(13, 65, 82)
+                WeatherKind.RAIN, WeatherKind.FOG, WeatherKind.CLOUDS -> Color.rgb(17, 91, 102)
+                WeatherKind.SNOW -> Color.rgb(73, 126, 137)
+                else -> Color.rgb(13, 112, 123)
+            }
+            drawerBackdropPaint.shader = LinearGradient(0f, 0f, 0f, h, top, bottom, Shader.TileMode.CLAMP)
+            canvas.drawRect(0f, 0f, w, h, drawerBackdropPaint)
+            drawerBackdropPaint.shader = null
+            // Fixed underwater light shafts; intentionally unaffected by phone motion.
+            backdropDetailPaint.strokeWidth = 1.2f * density
+            backdropDetailPaint.alpha = 22
+            for (i in 0 until 5) {
+                val x = w * (0.08f + i * 0.22f)
+                val y = h * (0.08f + (i % 2) * 0.06f)
+                canvas.drawLine(x, y, x + w * 0.09f, h * 0.88f, backdropDetailPaint)
+            }
+        }
+
         private fun drawWater(canvas: Canvas) {
             canvas.save()
             val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
             val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
-            // Overscanned water artwork moves with the simulated liquid mass.
+            // Only the liquid layer follows tilt and shake. The drawer scenery remains fixed.
             canvas.translate(motionX*14f*density+shake*2.5f*density,motionY*8f*density)
             if (!weatherConfirmed) {
-                // Keep the drawer calm and neutral until the matching weather/time scene is confirmed.
                 canvas.drawPath(wave.fill, neutralWaterPaint)
             } else {
                 val waterPaint = drawerWaterPaint.takeIf { drawerWaterShader != null }
@@ -747,9 +779,10 @@ class MainActivity : Activity() {
                 if (waterPaint == null) {
                     canvas.drawPath(wave.fill, fallbackWaterPaint)
                 } else {
+                    waterPaint.alpha = 224
                     canvas.drawPath(wave.fill, waterPaint)
-                    // Keep the supplied turquoise water photo vivid rather than washing it out.
-                    tintPaint.alpha = (42f * drawerProgress).toInt().coerceIn(0, 42)
+                    waterPaint.alpha = 255
+                    tintPaint.alpha = (30f * drawerProgress).toInt().coerceIn(0, 30)
                     canvas.drawPath(wave.fill, tintPaint)
                 }
             }
@@ -912,12 +945,14 @@ class MainActivity : Activity() {
             }
             val h = height.toFloat()
             val w = width.toFloat()
-            val waterY = h - drawerProgress * h * 1.08f
+            // The water rises as its own element but keeps a visible surface when fully open.
+            val waterY = h - drawerProgress * h * 0.82f
             val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
             val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
             val amplitude=28f*density*sin(PI.toFloat()*drawerProgress)+7f*density*shake
             wave.build(w,h,waterY,amplitude,drawerProgress,motionX,motionY,shake,motionVelocityX,motionVelocityY,density)
             if (drawerProgress < 1f) drawHome(canvas)
+            drawDrawerBackdrop(canvas)
             drawWater(canvas)
             drawMotionDebug(canvas)
             drawWaterLife(canvas)
