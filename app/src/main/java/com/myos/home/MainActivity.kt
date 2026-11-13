@@ -8,9 +8,11 @@ import android.content.Intent
 import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -85,6 +87,12 @@ class MainActivity : Activity() {
 
         private val photo: Bitmap? = loadOceanPhoto()
         private val photoRect = RectF()
+        private val photoMatrix = Matrix()
+        private val photoPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        private val fallbackWaterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(14, 124, 140)
+        }
+        private var photoShader: BitmapShader? = null
         private val homeFadePaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val foamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -191,6 +199,17 @@ class MainActivity : Activity() {
                 ivory, Color.TRANSPARENT, Shader.TileMode.CLAMP
             )
             homeFadePaint.shader = fadeShader
+            photo?.let { bitmap ->
+                val scale = max(w.toFloat() / bitmap.width, h.toFloat() / bitmap.height)
+                val dx = (w - bitmap.width * scale) / 2f
+                val dy = (h - bitmap.height * scale) / 2f
+                photoMatrix.setScale(scale, scale)
+                photoMatrix.postTranslate(dx, dy)
+                photoShader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).also {
+                    it.setLocalMatrix(photoMatrix)
+                }
+                photoPaint.shader = photoShader
+            }
             tintShader = LinearGradient(
                 0f, 0f, 0f, h.toFloat(),
                 intArrayOf(Color.rgb(14, 124, 140), Color.rgb(47, 180, 188)),
@@ -287,16 +306,13 @@ class MainActivity : Activity() {
         }
 
         private fun drawWater(canvas: Canvas) {
-            canvas.save()
-            canvas.clipPath(wave.fill)
             if (photo == null) {
-                canvas.drawColor(Color.rgb(14, 124, 140))
+                canvas.drawPath(wave.fill, fallbackWaterPaint)
             } else {
-                drawPhoto(canvas)
+                canvas.drawPath(wave.fill, photoPaint)
                 tintPaint.alpha = (115f * drawerProgress).toInt().coerceIn(0, 115)
-                canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), tintPaint)
+                canvas.drawPath(wave.fill, tintPaint)
             }
-            canvas.restore()
 
             canvas.save()
             canvas.translate(0f, 6f * density)
