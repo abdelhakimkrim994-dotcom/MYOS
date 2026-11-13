@@ -91,9 +91,12 @@ class MainActivity : Activity() {
         private val apps = mutableListOf<LaunchableApp>()
 
         private val photo: Bitmap? = loadOceanPhoto()
+        private val drawerWater: Bitmap? = loadDrawerWaterPhoto()
         private val photoRect = RectF()
         private val photoMatrix = Matrix()
         private val photoPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        private val drawerWaterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        private var drawerWaterShader: BitmapShader? = null
         private val fallbackWaterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(14, 124, 140)
         }
@@ -160,6 +163,12 @@ class MainActivity : Activity() {
             null
         }
 
+        private fun loadDrawerWaterPhoto(): Bitmap? = try {
+            assets.open("myos_drawer_water.jpg").use { BitmapFactory.decodeStream(it) }
+        } catch (_: Exception) {
+            null
+        }
+
         init {
             isFocusable = true
             isClickable = true
@@ -218,6 +227,19 @@ class MainActivity : Activity() {
                     it.setLocalMatrix(photoMatrix)
                 }
                 photoPaint.shader = photoShader
+            }
+            drawerWater?.let { bitmap ->
+                val scale = max(w.toFloat() / bitmap.width, h.toFloat() / bitmap.height)
+                val dx = (w - bitmap.width * scale) / 2f
+                val dy = (h - bitmap.height * scale) / 2f
+                val drawerMatrix = Matrix().apply {
+                    setScale(scale, scale)
+                    postTranslate(dx, dy)
+                }
+                drawerWaterShader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).also {
+                    it.setLocalMatrix(drawerMatrix)
+                }
+                drawerWaterPaint.shader = drawerWaterShader
             }
             tintShader = LinearGradient(
                 0f, 0f, 0f, h.toFloat(),
@@ -364,11 +386,14 @@ class MainActivity : Activity() {
         }
 
         private fun drawWater(canvas: Canvas) {
-            if (photo == null) {
+            val waterPaint = drawerWaterPaint.takeIf { drawerWaterShader != null }
+                ?: photoPaint.takeIf { photoShader != null }
+            if (waterPaint == null) {
                 canvas.drawPath(wave.fill, fallbackWaterPaint)
             } else {
-                canvas.drawPath(wave.fill, photoPaint)
-                tintPaint.alpha = (115f * drawerProgress).toInt().coerceIn(0, 115)
+                canvas.drawPath(wave.fill, waterPaint)
+                // Keep the supplied turquoise water photo vivid rather than washing it out.
+                tintPaint.alpha = (42f * drawerProgress).toInt().coerceIn(0, 42)
                 canvas.drawPath(wave.fill, tintPaint)
             }
 
@@ -431,9 +456,9 @@ class MainActivity : Activity() {
                         0.35f * sin(2f * PI.toFloat() * raftTime / (period * 1.7f) + phase * 1.7f)
                     val drift = sin(2f * PI.toFloat() * raftTime / driftPeriod + phase * 0.6f)
                     val tilt = sin(2f * PI.toFloat() * raftTime / (period * 1.3f) + phase * 2.3f)
-                    raftX = drift * 1.25f * density * raftGain
-                    raftY = bob * 2.5f * density * raftGain
-                    raftRotation = tilt * 0.7f * raftGain
+                    raftX = drift * 8.5f * density * raftGain
+                    raftY = bob * 13f * density * raftGain
+                    raftRotation = tilt * 4.2f * raftGain
                 }
                 val drawCenterX = centerX + raftX
                 val drawCy = cy + raftY
