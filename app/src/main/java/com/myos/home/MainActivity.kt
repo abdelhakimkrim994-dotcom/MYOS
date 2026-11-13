@@ -391,8 +391,6 @@ class MainActivity : Activity() {
                     velocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
                     gestureMode = when {
                         drawerProgress <= 0f -> GestureMode.OPENING
-                        drawerProgress >= 0.999f && downY < height * 0.18f -> GestureMode.CLOSING
-                        drawerProgress >= 0.999f && scrollY <= 0f -> GestureMode.CLOSING
                         drawerProgress >= 0.999f -> GestureMode.SCROLLING
                         else -> GestureMode.CLOSING
                     }
@@ -416,7 +414,12 @@ class MainActivity : Activity() {
                         }
                         GestureMode.SCROLLING -> {
                             val delta = event.y - lastY
-                            scrollY = (scrollY - delta).coerceIn(0f, maxScroll)
+                            if (scrollY <= 0f && delta > 0f) {
+                                gestureMode = GestureMode.CLOSING
+                                drawerProgress = (1f - (event.y - downY) / (height * 0.70f)).coerceIn(0f, 1f)
+                            } else {
+                                scrollY = (scrollY - delta).coerceIn(0f, maxScroll)
+                            }
                             invalidate()
                         }
                         GestureMode.NONE -> Unit
@@ -447,12 +450,7 @@ class MainActivity : Activity() {
                             }
                             settleDrawer(shouldOpen)
                         }
-                        GestureMode.SCROLLING -> {
-                            if (scrollY <= 0f && event.y - downY > 70f * density) {
-                                drawerProgress = (1f - (event.y - downY) / (height * 0.70f)).coerceIn(0f, 1f)
-                                settleDrawer(drawerProgress >= 0.35f)
-                            }
-                        }
+                        GestureMode.SCROLLING -> Unit
                         GestureMode.NONE -> Unit
                     }
 
