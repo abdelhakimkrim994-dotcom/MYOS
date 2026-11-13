@@ -51,7 +51,7 @@ jobs:
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
           test -n "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
-          grep -Fqi "2b:a2:b7:1d:d8:b4:b7:6a:b4:c0:59:26:88:6f:8b:f2:e2:1a:42:bf:37:3d:02:a4:d7:ac:06:18:f4:fd:7e" "$RUNNER_TEMP/apk-signature.txt"
+          grep -Fqi "2ba2b71dd7d8b4b76ab4c05926886f8bf2e21a42bf373d02a4d7ac0618f4fd7e" "$RUNNER_TEMP/apk-signature.txt"
 
       - name: Upload signed release APK
         uses: actions/upload-artifact@v4
