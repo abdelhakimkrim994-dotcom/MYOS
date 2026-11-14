@@ -30,16 +30,6 @@ import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.PixelFormat
-import android.opengl.GLES30
-import android.opengl.GLSurfaceView
-import android.widget.FrameLayout
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.FloatBuffer
-import java.nio.ShortBuffer
-import javax.microedition.khronos.egl.EGLConfig
-import javax.microedition.khronos.opengles.GL10
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -309,353 +299,8 @@ private class SloshWater(private val density: Float) {
 }
 
 
-/**
- * Small ocean objects carried by the liquid. Pearls are heavy and settle low;
- * shells and starfish are buoyant and gather near the free surface.
- */
-private class FloatingThings(private val density: Float, width: Float, height: Float) {
-    private data class Thing(
-        var x: Float, var y: Float, val radius: Float, val buoyancy: Float,
-        val kind: Int, val color: Int,
-        var vx: Float = 0f, var vy: Float = 0f, var rotation: Float = 0f
-    )
-    private val random = java.util.Random(19L)
-    private val things = ArrayList<Thing>()
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val highlight = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val path = Path()
-
-    init {
-        val colors = intArrayOf(
-            Color.rgb(244, 177, 104), Color.rgb(255, 205, 128),
-            Color.rgb(240, 125, 112), Color.rgb(245, 220, 164)
-        )
-        // Pearls: heavier objects that drift and collect toward the low side.
-        repeat(7) { i ->
-            val r = (5.5f + random.nextFloat() * 3.5f) * density
-            things += Thing(
-                width * (0.12f + random.nextFloat() * 0.76f),
-                height * (0.59f + random.nextFloat() * 0.32f),
-                r, 0.10f, 0, Color.rgb(226, 239, 236)
-            )
-        }
-        // Shells and starfish: buoyant objects that ride the moving surface.
-        repeat(4) { i ->
-            val r = (10f + random.nextFloat() * 3f) * density
-            things += Thing(
-                width * (0.12f + random.nextFloat() * 0.76f),
-                height * (0.50f + random.nextFloat() * 0.12f),
-                r, 1.0f, 1 + (i % 2), colors[i % colors.size],
-                rotation = random.nextFloat() * 0.7f - 0.35f
-            )
-        }
-        highlight.color = Color.WHITE
-        highlight.style = Paint.Style.STROKE
-        highlight.strokeCap = Paint.Cap.ROUND
-    }
-
-    fun shake(strength: Float) {
-        for (t in things) {
-            t.vx += (random.nextFloat() - 0.5f) * 520f * density * strength
-            t.vy += (random.nextFloat() - 0.5f) * 520f * density * strength
-        }
-    }
-
-    fun step(dtInput: Float, w: Float, h: Float, gx: Float, gy: Float, surfaceD: Float, theta: Float) {
-        val dt = dtInput.coerceIn(0.001f, 0.033f)
-        val gravity = 980f * density
-        for (t in things) {
-            val signedDepth = (t.x - w * 0.5f) * gx + (t.y - h * 0.5f) * gy - surfaceD
-            if (t.buoyancy > 0.5f) {
-                // A damped buoyancy spring keeps the shell/starfish partly submerged.
-                val desiredDepth = t.radius * 0.72f
-                val error = signedDepth - desiredDepth
-                val acceleration = (-error * 15f - (t.vx * gx + t.vy * gy) * 5.2f)
-                t.vx += gx * acceleration * dt
-                t.vy += gy * acceleration * dt
-                val tangentSpeed = t.vx * gy - t.vy * gx
-                t.vx += gy * (-tangentSpeed * 1.0f) * dt
-                t.vy += -gx * (-tangentSpeed * 1.0f) * dt
-            } else {
-                // Pearls retain weight and slowly slide down the gravity vector.
-                t.vx += gx * gravity * dt
-                t.vy += gy * gravity * dt
-                val drag = kotlin.math.exp(-1.8f * dt)
-                t.vx *= drag
-                t.vy *= drag
-            }
-            t.x += t.vx * dt
-            t.y += t.vy * dt
-            val pad = t.radius
-            if (t.x < pad) { t.x = pad; t.vx = abs(t.vx) * 0.28f }
-            if (t.x > w - pad) { t.x = w - pad; t.vx = -abs(t.vx) * 0.28f }
-            if (t.y < pad) { t.y = pad; t.vy = abs(t.vy) * 0.25f }
-            if (t.y > h - pad) { t.y = h - pad; t.vy = -abs(t.vy) * 0.24f }
-            t.rotation += if (t.buoyancy > 0.5f) {
-                (theta - t.rotation) * min(1f, 3.5f * dt)
-            } else {
-                ((t.vx * gy - t.vy * gx) / max(t.radius, 1f)) * dt * 0.25f
-            }
-        }
-        // Gentle non-overlap keeps the decorative objects from occupying the same spot.
-        for (i in things.indices) for (j in i + 1 until things.size) {
-            val a = things[i]; val b = things[j]
-            val dx = b.x - a.x; val dy = b.y - a.y
-            val minDistance = (a.radius + b.radius) * 0.82f
-            val distance2 = dx * dx + dy * dy
-            if (distance2 < minDistance * minDistance && distance2 > 0.01f) {
-                val distance = kotlin.math.sqrt(distance2)
-                val push = (minDistance - distance) * 0.5f / distance
-                a.x -= dx * push; a.y -= dy * push
-                b.x += dx * push; b.y += dy * push
-            }
-        }
-    }
-
-    fun draw(canvas: Canvas, alpha: Float) {
-        if (alpha <= 0.01f) return
-        val baseAlpha = (alpha * 255f).toInt().coerceIn(0, 255)
-        for (t in things) {
-            canvas.save()
-            canvas.translate(t.x, t.y)
-            canvas.rotate(Math.toDegrees(t.rotation.toDouble()).toFloat())
-            when (t.kind) {
-                0 -> {
-                    // Pearl: softly shaded sphere with a tiny specular highlight.
-                    paint.shader = LinearGradient(
-                        -t.radius, -t.radius, t.radius, t.radius,
-                        intArrayOf(Color.rgb(255,255,250), Color.rgb(178,218,222), Color.rgb(245,250,239)),
-                        null, Shader.TileMode.CLAMP
-                    )
-                    paint.alpha = baseAlpha
-                    canvas.drawCircle(0f, 0f, t.radius, paint)
-                    paint.shader = null
-                    highlight.strokeWidth = 1.2f * density
-                    highlight.alpha = (baseAlpha * 0.78f).toInt()
-                    canvas.drawArc(-t.radius * 0.58f, -t.radius * 0.62f, t.radius * 0.18f, t.radius * 0.16f, 205f, 95f, false, highlight)
-                }
-                1 -> {
-                    // Scallop shell with ribbed fan and a shaded lower lip.
-                    paint.shader = null
-                    paint.color = t.color; paint.alpha = baseAlpha
-                    path.rewind()
-                    path.moveTo(-t.radius, t.radius * 0.45f)
-                    path.quadTo(-t.radius * 1.12f, -t.radius * 0.82f, 0f, -t.radius)
-                    path.quadTo(t.radius * 1.12f, -t.radius * 0.82f, t.radius, t.radius * 0.45f)
-                    path.quadTo(0f, t.radius * 1.05f, -t.radius, t.radius * 0.45f)
-                    path.close()
-                    canvas.drawPath(path, paint)
-                    highlight.strokeWidth = 1f * density
-                    highlight.alpha = (baseAlpha * 0.62f).toInt()
-                    for (rib in -2..2) {
-                        canvas.drawLine(0f, -t.radius * 0.78f, rib * t.radius * 0.31f, t.radius * 0.55f, highlight)
-                    }
-                    paint.color = Color.rgb(255, 231, 194); paint.alpha = baseAlpha
-                    canvas.drawOval(-t.radius * 0.62f, t.radius * 0.34f, t.radius * 0.62f, t.radius * 0.62f, paint)
-                }
-                else -> {
-                    // Rounded five-armed starfish.
-                    paint.shader = null
-                    paint.color = t.color; paint.alpha = baseAlpha
-                    path.rewind()
-                    for (i in 0 until 10) {
-                        val angle = -Math.PI / 2.0 + i * Math.PI / 5.0
-                        val radius = t.radius * if (i % 2 == 0) 1f else 0.48f
-                        val x = kotlin.math.cos(angle).toFloat() * radius
-                        val y = kotlin.math.sin(angle).toFloat() * radius
-                        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                    }
-                    path.close()
-                    canvas.drawPath(path, paint)
-                    paint.color = Color.argb(95, 255, 245, 210); paint.alpha = baseAlpha
-                    canvas.drawCircle(-t.radius * 0.18f, -t.radius * 0.12f, t.radius * 0.16f, paint)
-                }
-            }
-            canvas.restore()
-        }
-    }
-}
-
-
-/**
- * GPU-rendered liquid layer. A tessellated mesh is shaded with depth,
- * Fresnel highlights, moving caustics and gravity-driven surface waves.
- */
-private class WaterGlRenderer : GLSurfaceView.Renderer {
-    @Volatile private var drawer = 0f
-    @Volatile private var angle = 0f
-    @Volatile private var shake = 0f
-    private var program = 0
-    private var vertexBuffer: FloatBuffer? = null
-    private var indexBuffer: ShortBuffer? = null
-    private var indexCount = 0
-    private var positionHandle = 0
-    private var angleHandle = 0
-    private var drawerHandle = 0
-    private var timeHandle = 0
-    private var shakeHandle = 0
-    private val started = SystemClock.elapsedRealtime()
-
-    fun update(progress: Float, surfaceAngle: Float, shakeAmount: Float) {
-        drawer = progress.coerceIn(0f, 1f)
-        angle = surfaceAngle
-        shake = shakeAmount.coerceIn(0f, 2f)
-    }
-
-    override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        GLES30.glClearColor(0f, 0f, 0f, 0f)
-        GLES30.glEnable(GLES30.GL_BLEND)
-        GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
-        val vertex = """
-            #version 300 es
-            layout(location=0) in vec2 aPosition;
-            uniform float uAngle;
-            uniform float uTime;
-            uniform float uShake;
-            out vec2 vPosition;
-            out float vWave;
-            void main() {
-                vPosition = aPosition;
-                float wave = sin(aPosition.x * 13.0 + uTime * 1.7) * 0.006;
-                wave += sin(aPosition.x * 27.0 - uTime * 1.15) * 0.003;
-                wave *= (0.35 + uShake);
-                vWave = wave;
-                gl_Position = vec4(aPosition.x, aPosition.y + wave, 0.0, 1.0);
-            }
-        """.trimIndent()
-        val fragment = """
-            #version 300 es
-            precision highp float;
-            in vec2 vPosition;
-            in float vWave;
-            uniform float uAngle;
-            uniform float uDrawer;
-            uniform float uTime;
-            uniform float uShake;
-            out vec4 fragColor;
-            void main() {
-                vec2 gravity = vec2(sin(uAngle), -cos(uAngle));
-                float signedDepth = dot(vPosition, gravity) - 0.10 + vWave;
-                if (signedDepth < 0.0) discard;
-
-                float depth = clamp(signedDepth / 1.25, 0.0, 1.0);
-                float edge = smoothstep(0.0, 0.035, signedDepth);
-                float sideShade = smoothstep(0.72, 1.0, abs(vPosition.x));
-                float causticA = sin(vPosition.x * 19.0 + vPosition.y * 13.0 + uTime * 1.4);
-                float causticB = sin(vPosition.x * 31.0 - vPosition.y * 17.0 - uTime * 1.1);
-                float caustics = pow(max(0.0, causticA * causticB), 5.0);
-                float shimmer = 0.5 + 0.5 * sin(vPosition.x * 8.0 + uTime * 1.8);
-                vec3 shallow = vec3(0.28, 0.88, 0.91);
-                vec3 deep = vec3(0.005, 0.29, 0.43);
-                vec3 color = mix(shallow, deep, smoothstep(0.0, 0.9, depth));
-                color *= 1.0 - sideShade * 0.24;
-                color += vec3(0.28, 0.75, 0.78) * caustics * 0.30;
-                float crest = exp(-abs(signedDepth) * 95.0);
-                color += vec3(0.58, 0.94, 0.97) * crest * (0.32 + shimmer * 0.18);
-                float alpha = (0.34 + depth * 0.34 + caustics * 0.08) * edge * uDrawer;
-                fragColor = vec4(color, alpha);
-            }
-        """.trimIndent()
-        program = linkProgram(compileShader(GLES30.GL_VERTEX_SHADER, vertex),
-                              compileShader(GLES30.GL_FRAGMENT_SHADER, fragment))
-        positionHandle = 0
-        angleHandle = GLES30.glGetUniformLocation(program, "uAngle")
-        drawerHandle = GLES30.glGetUniformLocation(program, "uDrawer")
-        timeHandle = GLES30.glGetUniformLocation(program, "uTime")
-        shakeHandle = GLES30.glGetUniformLocation(program, "uShake")
-        buildMesh()
-    }
-
-    private fun compileShader(type: Int, source: String): Int {
-        val shader = GLES30.glCreateShader(type)
-        GLES30.glShaderSource(shader, source)
-        GLES30.glCompileShader(shader)
-        val status = IntArray(1)
-        GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, status, 0)
-        if (status[0] == 0) {
-            val log = GLES30.glGetShaderInfoLog(shader)
-            GLES30.glDeleteShader(shader)
-            throw RuntimeException("Water shader compile failed: $log")
-        }
-        return shader
-    }
-
-    private fun linkProgram(vertex: Int, fragment: Int): Int {
-        val p = GLES30.glCreateProgram()
-        GLES30.glAttachShader(p, vertex)
-        GLES30.glAttachShader(p, fragment)
-        GLES30.glLinkProgram(p)
-        val status = IntArray(1)
-        GLES30.glGetProgramiv(p, GLES30.GL_LINK_STATUS, status, 0)
-        if (status[0] == 0) throw RuntimeException("Water shader link failed: " + GLES30.glGetProgramInfoLog(p))
-        GLES30.glDeleteShader(vertex)
-        GLES30.glDeleteShader(fragment)
-        return p
-    }
-
-    private fun buildMesh() {
-        val columns = 72
-        val rows = 48
-        val vertices = FloatArray((columns + 1) * (rows + 1) * 2)
-        var v = 0
-        for (y in 0..rows) for (x in 0..columns) {
-            vertices[v++] = -1f + 2f * x / columns
-            vertices[v++] = -1f + 2f * y / rows
-        }
-        val indices = ShortArray(rows * columns * 6)
-        var k = 0
-        for (y in 0 until rows) for (x in 0 until columns) {
-            val a = y * (columns + 1) + x
-            val b = a + columns + 1
-            indices[k++] = a.toShort(); indices[k++] = b.toShort(); indices[k++] = (a + 1).toShort()
-            indices[k++] = (a + 1).toShort(); indices[k++] = b.toShort(); indices[k++] = (b + 1).toShort()
-        }
-        vertexBuffer = ByteBuffer.allocateDirect(vertices.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply { put(vertices); position(0) }
-        indexBuffer = ByteBuffer.allocateDirect(indices.size * 2).order(ByteOrder.nativeOrder()).asShortBuffer().apply { put(indices); position(0) }
-        indexCount = indices.size
-    }
-
-    override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
-        GLES30.glViewport(0, 0, width, height)
-    }
-
-    override fun onDrawFrame(gl: GL10?) {
-        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
-        if (drawer <= 0.001f || program == 0) return
-        GLES30.glUseProgram(program)
-        GLES30.glUniform1f(angleHandle, angle)
-        GLES30.glUniform1f(drawerHandle, drawer)
-        GLES30.glUniform1f(timeHandle, (SystemClock.elapsedRealtime() - started) / 1000f)
-        GLES30.glUniform1f(shakeHandle, shake)
-        val vertices = vertexBuffer ?: return
-        val indices = indexBuffer ?: return
-        GLES30.glEnableVertexAttribArray(positionHandle)
-        vertices.position(0)
-        GLES30.glVertexAttribPointer(positionHandle, 2, GLES30.GL_FLOAT, false, 8, vertices)
-        indices.position(0)
-        GLES30.glDrawElements(GLES30.GL_TRIANGLES, indexCount, GLES30.GL_UNSIGNED_SHORT, indices)
-        GLES30.glDisableVertexAttribArray(positionHandle)
-    }
-}
-
-private class WaterGlView(context: Context, val waterRenderer: WaterGlRenderer) : GLSurfaceView(context) {
-    init {
-        setEGLContextClientVersion(3)
-        setEGLConfigChooser(8, 8, 8, 8, 16, 0)
-        holder.setFormat(PixelFormat.TRANSLUCENT)
-        setZOrderMediaOverlay(true)
-        setRenderer(waterRenderer)
-        renderMode = RENDERMODE_WHEN_DIRTY
-        isClickable = false
-        isFocusable = false
-    }
-}
-
 class MainActivity : Activity() {
     private lateinit var launcherView: LauncherView
-    private lateinit var waterGlRenderer: WaterGlRenderer
-    private lateinit var waterGlView: WaterGlView
-    private lateinit var foregroundView: View
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -668,24 +313,11 @@ class MainActivity : Activity() {
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
         launcherView = LauncherView()
-        waterGlRenderer = WaterGlRenderer()
-        waterGlView = WaterGlView(this, waterGlRenderer)
-        foregroundView = object : View(this) {
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                if (::launcherView.isInitialized) launcherView.drawForeground(canvas)
-            }
-        }.apply { isClickable = false; isFocusable = false }
-        val root = FrameLayout(this)
-        root.addView(launcherView, FrameLayout.LayoutParams(-1, -1))
-        root.addView(waterGlView, FrameLayout.LayoutParams(-1, -1))
-        root.addView(foregroundView, FrameLayout.LayoutParams(-1, -1))
-        setContentView(root)
+        setContentView(launcherView)
     }
 
     override fun onPause() {
         if (::launcherView.isInitialized) launcherView.stopMotionSensors()
-        if (::waterGlView.isInitialized) waterGlView.onPause()
         super.onPause()
     }
 
@@ -694,15 +326,7 @@ class MainActivity : Activity() {
         if (::launcherView.isInitialized) {
             launcherView.reloadApps()
             launcherView.startMotionSensors()
-            launcherView.startWeatherUpdates()
         }
-        if (::waterGlView.isInitialized) waterGlView.onResume()
-    }
-
-    @Deprecated("Deprecated in Android API; retained for broad device compatibility")
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 41 && ::launcherView.isInitialized && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) launcherView.loadWeatherFromLocation()
     }
 
     @Suppress("DEPRECATION")
@@ -764,7 +388,7 @@ class MainActivity : Activity() {
         private var permissionRequested = false
         private var weatherKind = WeatherKind.CLEAR
         // Weather artwork stays hidden until a fresh API result or a still-valid cached result confirms both condition and day/night.
-        private var weatherConfirmed = false
+        private var weatherConfirmed = true
         private var weatherLoading = false
         private val skyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val weatherDetailPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -854,7 +478,6 @@ class MainActivity : Activity() {
         }
         private val wave = WaveShape()
         private val slosh = SloshWater(density)
-        private var floatingThings: FloatingThings? = null
         private var homeWaterline = 0f
         private var fadeShader: LinearGradient? = null
         private var tintShader: LinearGradient? = null
@@ -940,8 +563,6 @@ class MainActivity : Activity() {
             val dt=((now-lastPhysicsFrame)/1000f).coerceIn(0.001f,0.04f)
             lastPhysicsFrame=now
             slosh.step(dt)
-            floatingThings?.step(dt.coerceAtMost(0.033f), width.toFloat(), height.toFloat(),
-                slosh.gravityX, slosh.gravityY, slosh.surfaceDistance, slosh.angle)
             motionX = slosh.horizontalMotion
             motionY = slosh.verticalMotion
             val stiffness=18f
@@ -961,7 +582,6 @@ class MainActivity : Activity() {
                 shakeKickAt=now
                 shakeStrength=(magnitude/15f).coerceIn(0.7f,1.7f)
                 slosh.kick(shakeStrength)
-                floatingThings?.shake(shakeStrength)
                 // A shake injects momentum into the liquid; the spring and damping do the rest.
                 motionVelocityX=(motionVelocityX+x*0.045f).coerceIn(-3.2f,3.2f)
                 motionVelocityY=(motionVelocityY+y*0.045f-z*0.018f).coerceIn(-3.2f,3.2f)
@@ -984,20 +604,10 @@ class MainActivity : Activity() {
         }
 
         fun startWeatherUpdates() {
-            val cached=weatherPrefs.getString("kind",null)
-            val fetchedAt=weatherPrefs.getLong("fetched_at",0L)
-            val now=System.currentTimeMillis()
-            val cachedKind=cached?.let { runCatching { WeatherKind.valueOf(it) }.getOrNull() }
-            val cacheIsFresh=cachedKind!=null && fetchedAt>0L && now>=fetchedAt && now-fetchedAt<60L*60L*1000L
-
-            // Never show yesterday's sky or a default moon/sun while a new confirmation is pending.
-            weatherConfirmed=cacheIsFresh
-            if(cacheIsFresh) weatherKind=cachedKind!!
+            // Weather/time-driven artwork is temporarily disabled. Keep one fixed scene.
+            weatherKind = WeatherKind.CLEAR
+            weatherConfirmed = true
             invalidate()
-
-            if(cacheIsFresh) return
-            if(this@MainActivity.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED) loadWeatherFromLocation()
-            else if(!permissionRequested) { permissionRequested=true; this@MainActivity.requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION),41) }
         }
         fun loadWeatherFromLocation() {
             if (this@MainActivity.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED || weatherLoading) return
@@ -1050,16 +660,9 @@ class MainActivity : Activity() {
             WeatherKind.NIGHT->Color.rgb(15,25,48)
         }
         private fun drawWeatherSky(canvas:Canvas) {
-            val top:Int; val bottom:Int
-            when(weatherKind) {
-                WeatherKind.CLEAR->{top=Color.rgb(126,205,231);bottom=Color.rgb(244,218,174)}
-                WeatherKind.CLOUDS->{top=Color.rgb(139,164,177);bottom=Color.rgb(207,211,203)}
-                WeatherKind.RAIN->{top=Color.rgb(67,91,111);bottom=Color.rgb(140,161,164)}
-                WeatherKind.STORM->{top=Color.rgb(24,34,53);bottom=Color.rgb(80,103,119)}
-                WeatherKind.SNOW->{top=Color.rgb(166,199,218);bottom=Color.rgb(230,237,237)}
-                WeatherKind.FOG->{top=Color.rgb(153,172,171);bottom=Color.rgb(211,218,208)}
-                WeatherKind.NIGHT->{top=Color.rgb(8,17,42);bottom=Color.rgb(43,65,91)}
-            }
+            // One stable daytime sky while weather/time artwork switching is paused.
+            val top = Color.rgb(126, 205, 231)
+            val bottom = Color.rgb(244, 218, 174)
             skyPaint.shader=LinearGradient(0f,0f,0f,homeWaterline,top,bottom,Shader.TileMode.CLAMP)
             canvas.drawRect(0f,0f,width.toFloat(),homeWaterline+2f*density,skyPaint); skyPaint.shader=null
             if(weatherKind==WeatherKind.CLEAR) {
@@ -1135,7 +738,6 @@ class MainActivity : Activity() {
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             super.onSizeChanged(w, h, oldw, oldh)
             homeWaterline = h * 0.58f
-            floatingThings = FloatingThings(density, w.toFloat(), h.toFloat())
             val fadeBottom = homeWaterline + 48f * density
             fadeShader = LinearGradient(
                 0f, homeWaterline, 0f, fadeBottom,
@@ -1380,18 +982,8 @@ class MainActivity : Activity() {
         private fun drawDrawerBackdrop(canvas: Canvas) {
             val w = width.toFloat()
             val h = height.toFloat()
-            val top = if (!weatherConfirmed) Color.rgb(18, 55, 69) else when (weatherKind) {
-                WeatherKind.NIGHT, WeatherKind.STORM -> Color.rgb(8, 35, 53)
-                WeatherKind.RAIN, WeatherKind.FOG, WeatherKind.CLOUDS -> Color.rgb(18, 66, 78)
-                WeatherKind.SNOW -> Color.rgb(47, 91, 104)
-                else -> Color.rgb(9, 78, 91)
-            }
-            val bottom = if (!weatherConfirmed) Color.rgb(25, 83, 91) else when (weatherKind) {
-                WeatherKind.NIGHT, WeatherKind.STORM -> Color.rgb(13, 65, 82)
-                WeatherKind.RAIN, WeatherKind.FOG, WeatherKind.CLOUDS -> Color.rgb(17, 91, 102)
-                WeatherKind.SNOW -> Color.rgb(73, 126, 137)
-                else -> Color.rgb(13, 112, 123)
-            }
+            val top = Color.rgb(9, 78, 91)
+            val bottom = Color.rgb(13, 112, 123)
             drawerBackdropPaint.shader = LinearGradient(0f, 0f, 0f, h, top, bottom, Shader.TileMode.CLAMP)
             canvas.drawRect(0f, 0f, w, h, drawerBackdropPaint)
             drawerBackdropPaint.shader = null
@@ -1435,18 +1027,12 @@ class MainActivity : Activity() {
         }
 
         private fun drawWaterLife(canvas:Canvas) {
-            if(!weatherConfirmed || raftAnimator?.isRunning!=true || drawerProgress<0.85f) return
-            val now=(SystemClock.uptimeMillis()-raftStartTime)/1000f; val w=width.toFloat(); val h=height.toFloat()
+            if (raftAnimator?.isRunning != true || drawerProgress < 0.85f) return
+            val now = (SystemClock.uptimeMillis() - raftStartTime) / 1000f
+            val w = width.toFloat()
+            val h = height.toFloat()
             canvas.save()
             slosh.clipToWater(canvas, w, h)
-            for(i in 0 until 19) {
-                val seed=i*0.618f; val progress=(now*(0.055f+(i%5)*0.012f)+seed)%1.18f
-                val x=(0.08f+((i*37)%83)/100f)*w+sin(now*1.3f+seed*9f)*7f*density
-                val y=h*(1f-slosh.fill*(0.08f+progress*0.92f)); val radius=(1.7f+(i%4)*0.8f)*density
-                lifePaint.style=Paint.Style.STROKE; lifePaint.strokeWidth=1f*density; lifePaint.color=Color.argb(75+(i%4)*18,224,250,255)
-                canvas.drawCircle(x,y,radius,lifePaint); lifePaint.style=Paint.Style.FILL; lifePaint.color=Color.argb(105,255,255,255)
-                canvas.drawCircle(x-radius*0.35f,y-radius*0.35f,radius*0.22f,lifePaint)
-            }
             for(i in 0 until 8) {
                 val seed=i*0.731f; val direction=if(i%2==0) 1f else -1f; val speed=10f+(i%4)*4f
                 val travel=now*speed*direction+seed*w*1.8f; val span=w+70f*density
@@ -1473,14 +1059,8 @@ class MainActivity : Activity() {
                 lifePaint.color=Color.WHITE; lifePaint.alpha=235; canvas.drawCircle(size*0.27f,-size*0.09f,size*0.055f,lifePaint)
                 lifePaint.color=Color.rgb(28,55,65); canvas.drawCircle(size*0.29f,-size*0.09f,size*0.027f,lifePaint); canvas.restoreToCount(saved)
             }
-            if(weatherKind==WeatherKind.RAIN || weatherKind==WeatherKind.STORM) {
-                lifePaint.style=Paint.Style.STROKE; lifePaint.strokeWidth=1.3f*density; lifePaint.color=Color.argb(if(weatherKind==WeatherKind.STORM) 105 else 70,218,239,248)
-                for(i in 0 until 24) { val x=((i*47f+now*(45f+i%5*9f))%(w+20f))-10f; val y=(i*71f+now*130f)%h; canvas.drawLine(x,y,x-3f*density,y+10f*density,lifePaint) }
-            } else if(weatherKind==WeatherKind.SNOW) {
-                lifePaint.style=Paint.Style.FILL; lifePaint.color=Color.argb(190,245,252,255)
-                for(i in 0 until 18) { val x=(i*59f+sin(now+i)*15f)%w; val y=(i*83f+now*24f)%h; canvas.drawCircle(x,y,(1.2f+i%3)*density,lifePaint) }
-            }
-            canvas.restore(); lifePaint.alpha=255
+            canvas.restore()
+            lifePaint.alpha = 255
         }
 
         private fun drawApps(canvas: Canvas) {
@@ -1580,43 +1160,21 @@ class MainActivity : Activity() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             if (drawerProgress <= 0f) {
-                waterGlRenderer.update(0f, slosh.angle, 0f)
-                waterGlView.requestRender()
                 drawHome(canvas)
                 return
             }
             val h = height.toFloat()
             val w = width.toFloat()
-            // The water rises as its own element but keeps a visible surface when fully open.
             val waterY = h - drawerProgress * h * 1.08f
-            val shakeAge=(SystemClock.uptimeMillis()-shakeKickAt).coerceAtLeast(0L)
-            val shake=if(shakeKickAt==0L) 0f else (1f-shakeAge/1200f).coerceIn(0f,1f)*shakeStrength
             if (drawerProgress < 1f) drawHome(canvas)
-            // Reveal the stationary drawer environment only where the drawer has risen.
-            // This keeps the home scene visible during the transition.
+            // The drawer backdrop is a fixed scene. Only the liquid and fish respond to gravity.
             canvas.save()
             canvas.clipRect(0f, waterY.coerceAtLeast(0f), w, h)
             drawDrawerBackdrop(canvas)
             canvas.restore()
-            // The GPU water layer and foreground Canvas layer are sibling views.
-            // This view owns only the stationary home/drawer backgrounds.
-            waterGlRenderer.update(drawerProgress, slosh.angle, shake)
-            waterGlView.requestRender()
-            foregroundView.invalidate()
-        }
-
-        fun drawForeground(canvas: Canvas) {
-            if (drawerProgress <= 0f) return
-            val w = width.toFloat()
-            val h = height.toFloat()
-            drawMotionDebug(canvas)
+            drawWater(canvas)
             drawWaterLife(canvas)
-            canvas.save()
-            slosh.clipToWater(canvas, w, h)
-            floatingThings?.draw(canvas, drawerProgress)
-            canvas.restore()
             drawApps(canvas)
-            drawGlassDepthFrame(canvas)
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
