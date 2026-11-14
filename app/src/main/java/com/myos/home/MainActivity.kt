@@ -252,29 +252,68 @@ class MainActivity : Activity(), SensorEventListener {
             val h = height.toFloat()
             drawPaperTexture(canvas, w, h)
 
-            val px = parallaxX * 9f * density
-            val py = parallaxY * 7f * density
-            drawMountainLayer(canvas, w, h, 0.12f, paperShade, px * 0.25f, py * 0.25f)
-            drawMountainLayer(canvas, w, h, 0.29f, Color.rgb(196, 187, 168), px * 0.48f, py * 0.48f)
-            drawMountainLayer(canvas, w, h, 0.43f, Color.rgb(151, 145, 130), px * 0.72f, py * 0.72f)
-            drawMountainLayer(canvas, w, h, 0.58f, Color.rgb(103, 101, 91), px, py)
+            // Distant ink mountains: pale, broken silhouettes fading into rice-paper mist.
+            val px = parallaxX * 13f * density
+            val py = parallaxY * 9f * density
+            drawRidge(canvas, w, h, 0.30f, 0.48f, Color.rgb(215, 207, 190), px * 0.18f, py * 0.18f, 0.75f)
+            drawRidge(canvas, w, h, 0.38f, 0.57f, Color.rgb(190, 181, 162), px * 0.35f, py * 0.35f, 0.9f)
 
-            // Mist bands soften the landscape and preserve clear space for shortcuts.
-            paint.color = Color.argb(150, 242, 237, 225)
+            // Main mountain peaks and their ink-wash shadow faces.
+            drawPeak(canvas, w, h, w * 0.20f + px * 0.55f, h * 0.43f + py * 0.55f, w * 0.43f, h * 0.39f, Color.rgb(111, 108, 96))
+            drawPeak(canvas, w, h, w * 0.79f + px * 0.62f, h * 0.46f + py * 0.62f, w * 0.36f, h * 0.32f, Color.rgb(132, 127, 112))
+            drawPeak(canvas, w, h, w * 0.50f + px * 0.8f, h * 0.53f + py * 0.8f, w * 0.48f, h * 0.24f, Color.rgb(157, 149, 130))
+
+            // Mist cuts through the valleys instead of forming flat graphic bands.
             paint.style = Paint.Style.FILL
-            canvas.drawOval(-w * 0.2f + px * 0.3f, h * 0.42f + py * 0.2f, w * 0.8f + px * 0.3f, h * 0.55f + py * 0.2f, paint)
-            canvas.drawOval(w * 0.25f + px * 0.2f, h * 0.49f + py * 0.2f, w * 1.2f + px * 0.2f, h * 0.61f + py * 0.2f, paint)
+            paint.color = Color.argb(190, 242, 237, 225)
+            val mist = Path().apply {
+                moveTo(-w * 0.1f, h * 0.48f)
+                cubicTo(w * 0.12f, h * 0.42f, w * 0.25f, h * 0.53f, w * 0.43f, h * 0.48f)
+                cubicTo(w * 0.62f, h * 0.43f, w * 0.77f, h * 0.54f, w * 1.1f, h * 0.46f)
+                lineTo(w * 1.1f, h * 0.60f)
+                cubicTo(w * 0.78f, h * 0.65f, w * 0.62f, h * 0.56f, w * 0.40f, h * 0.62f)
+                cubicTo(w * 0.18f, h * 0.66f, w * 0.04f, h * 0.57f, -w * 0.1f, h * 0.62f)
+                close()
+            }
+            canvas.drawPath(mist, paint)
 
-            // A small calligraphic title is intentionally kept away from the shortcut area.
+            // Thin waterfalls and a winding river lead the eye into the scene.
+            drawWaterfall(canvas, w * 0.28f + px * 0.55f, h * 0.48f, h * 0.67f)
+            drawWaterfall(canvas, w * 0.75f + px * 0.6f, h * 0.50f, h * 0.65f)
+            paint.color = Color.argb(115, 78, 86, 82)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 2.2f * density
+            paint.strokeCap = Paint.Cap.ROUND
+            val river = Path().apply {
+                moveTo(w * 0.49f + px, h * 0.61f + py)
+                cubicTo(w * 0.43f + px, h * 0.69f, w * 0.62f + px, h * 0.72f, w * 0.52f, h * 0.80f)
+                cubicTo(w * 0.46f, h * 0.85f, w * 0.54f, h * 0.88f, w * 0.48f, h * 0.91f)
+            }
+            canvas.drawPath(river, paint)
+            paint.strokeWidth = 0.8f * density
+            canvas.drawPath(Path().apply {
+                moveTo(w * 0.53f + px, h * 0.63f + py)
+                cubicTo(w * 0.50f, h * 0.70f, w * 0.67f, h * 0.75f, w * 0.57f, h * 0.81f)
+            }, paint)
+            paint.style = Paint.Style.FILL
+
+            // Foreground ink rocks frame the scene without filling the central negative space.
+            drawForegroundRock(canvas, w * 0.03f, h * 0.77f, w * 0.39f, h * 0.16f, true)
+            drawForegroundRock(canvas, w * 0.98f, h * 0.75f, w * 0.36f, h * 0.19f, false)
+            drawPine(canvas, w * 0.12f + px, h * 0.70f, 0.92f)
+            drawPine(canvas, w * 0.88f + px, h * 0.68f, 0.78f)
+            drawPavilion(canvas, w * 0.67f + px * 0.45f, h * 0.57f, 0.72f)
+
+            // Small calligraphic title and vermilion seal.
             paint.color = ink
             paint.textAlign = Paint.Align.RIGHT
             paint.typeface = Typeface.create("casual", Typeface.BOLD)
-            paint.textSize = 42f * scaledDensity
-            canvas.drawText("山水", w * 0.88f, h * 0.19f, paint)
+            paint.textSize = 39f * scaledDensity
+            canvas.drawText("山水", w * 0.89f, h * 0.16f, paint)
             paint.color = sealRed
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 1.6f * density
-            val seal = RectF(w * 0.79f, h * 0.205f, w * 0.91f, h * 0.245f)
+            paint.strokeWidth = 1.5f * density
+            val seal = RectF(w * 0.80f, h * 0.175f, w * 0.91f, h * 0.215f)
             canvas.drawRect(seal, paint)
             paint.style = Paint.Style.FILL
             paint.textAlign = Paint.Align.CENTER
@@ -283,6 +322,134 @@ class MainActivity : Activity(), SensorEventListener {
             canvas.drawText("山", seal.centerX(), seal.centerY() + 3f * density, paint)
 
             drawHomeDock(canvas, w, h)
+        }
+
+        private fun drawRidge(canvas: Canvas, w: Float, h: Float, leftY: Float, rightY: Float, color: Int, ox: Float, oy: Float, scale: Float) {
+            val p = Path().apply {
+                moveTo(-w * 0.1f + ox, h * leftY + oy)
+                lineTo(w * 0.10f + ox, h * (leftY - 0.12f * scale) + oy)
+                lineTo(w * 0.19f + ox, h * (leftY - 0.04f * scale) + oy)
+                lineTo(w * 0.34f + ox, h * (leftY - 0.19f * scale) + oy)
+                lineTo(w * 0.48f + ox, h * (leftY - 0.02f * scale) + oy)
+                lineTo(w * 0.65f + ox, h * (rightY - 0.13f * scale) + oy)
+                lineTo(w * 0.80f + ox, h * (rightY - 0.03f * scale) + oy)
+                lineTo(w * 1.1f + ox, h * rightY + oy)
+                lineTo(w * 1.1f, h * 0.72f)
+                lineTo(-w * 0.1f, h * 0.72f)
+                close()
+            }
+            paint.color = color
+            paint.style = Paint.Style.FILL
+            canvas.drawPath(p, paint)
+            paint.color = Color.argb(48, 48, 45, 38)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 0.9f * density
+            canvas.drawPath(p, paint)
+            paint.style = Paint.Style.FILL
+        }
+
+        private fun drawPeak(canvas: Canvas, w: Float, h: Float, cx: Float, peakY: Float, halfWidth: Float, depth: Float, color: Int) {
+            val baseY = peakY + depth
+            val silhouette = Path().apply {
+                moveTo(cx - halfWidth, baseY)
+                lineTo(cx - halfWidth * 0.64f, peakY + depth * 0.43f)
+                lineTo(cx - halfWidth * 0.39f, peakY + depth * 0.20f)
+                lineTo(cx - halfWidth * 0.22f, peakY + depth * 0.28f)
+                lineTo(cx, peakY)
+                lineTo(cx + halfWidth * 0.13f, peakY + depth * 0.13f)
+                lineTo(cx + halfWidth * 0.30f, peakY + depth * 0.08f)
+                lineTo(cx + halfWidth * 0.47f, peakY + depth * 0.36f)
+                lineTo(cx + halfWidth, baseY)
+                close()
+            }
+            paint.color = color
+            paint.style = Paint.Style.FILL
+            canvas.drawPath(silhouette, paint)
+
+            // Dry-brush creases on the mountain face.
+            paint.color = Color.argb(95, 38, 38, 34)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.15f * density
+            paint.strokeCap = Paint.Cap.ROUND
+            for (i in 0..4) {
+                val x = cx - halfWidth * 0.18f + i * halfWidth * 0.10f
+                canvas.drawLine(x, peakY + depth * (0.20f + i * 0.025f), x + halfWidth * 0.22f, peakY + depth * (0.50f + i * 0.035f), paint)
+            }
+            paint.style = Paint.Style.FILL
+        }
+
+        private fun drawWaterfall(canvas: Canvas, x: Float, top: Float, bottom: Float) {
+            paint.color = Color.argb(155, 247, 243, 232)
+            paint.style = Paint.Style.STROKE
+            paint.strokeCap = Paint.Cap.ROUND
+            paint.strokeWidth = 4f * density
+            canvas.drawLine(x, top, x + 2f * density, bottom, paint)
+            paint.color = Color.argb(100, 91, 91, 82)
+            paint.strokeWidth = 0.8f * density
+            canvas.drawLine(x + 3f * density, top + 4f * density, x + 4f * density, bottom - 5f * density, paint)
+            paint.style = Paint.Style.FILL
+        }
+
+        private fun drawForegroundRock(canvas: Canvas, x: Float, y: Float, rw: Float, rh: Float, left: Boolean) {
+            val sign = if (left) 1f else -1f
+            val rock = Path().apply {
+                moveTo(x - rw * 0.5f, y + rh)
+                cubicTo(x - rw * 0.40f, y + rh * 0.22f, x - rw * 0.16f, y - rh * 0.25f, x + rw * 0.02f * sign, y)
+                cubicTo(x + rw * 0.30f * sign, y - rh * 0.12f, x + rw * 0.43f * sign, y + rh * 0.46f, x + rw * 0.55f * sign, y + rh)
+                close()
+            }
+            paint.color = Color.rgb(76, 75, 66)
+            paint.style = Paint.Style.FILL
+            canvas.drawPath(rock, paint)
+            paint.color = Color.argb(110, 218, 208, 187)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1f * density
+            canvas.drawLine(x - rw * 0.20f, y + rh * 0.48f, x + rw * 0.03f * sign, y + rh * 0.12f, paint)
+            canvas.drawLine(x + rw * 0.03f * sign, y + rh * 0.12f, x + rw * 0.24f * sign, y + rh * 0.53f, paint)
+            paint.style = Paint.Style.FILL
+        }
+
+        private fun drawPine(canvas: Canvas, x: Float, baseY: Float, scale: Float) {
+            canvas.save()
+            canvas.translate(x, baseY)
+            canvas.scale(scale * density, scale * density)
+            paint.color = Color.rgb(48, 49, 43)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 2.1f
+            paint.strokeCap = Paint.Cap.ROUND
+            val trunk = Path().apply { moveTo(0f, 0f); cubicTo(-3f, -18f, 3f, -34f, -2f, -58f) }
+            canvas.drawPath(trunk, paint)
+            for (i in 0..5) {
+                val yy = -12f - i * 8f
+                val span = 15f - i * 1.7f
+                canvas.drawLine(-2f, yy, -span, yy - 7f, paint)
+                canvas.drawLine(-2f, yy, span, yy - 9f, paint)
+                canvas.drawLine(-span, yy - 7f, -span - 4f, yy - 10f, paint)
+                canvas.drawLine(span, yy - 9f, span + 4f, yy - 12f, paint)
+            }
+            paint.style = Paint.Style.FILL
+            canvas.restore()
+        }
+
+        private fun drawPavilion(canvas: Canvas, x: Float, y: Float, scale: Float) {
+            canvas.save()
+            canvas.translate(x, y)
+            canvas.scale(scale * density, scale * density)
+            paint.color = Color.rgb(55, 53, 46)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.8f
+            paint.strokeCap = Paint.Cap.ROUND
+            val roof = Path().apply {
+                moveTo(-19f, -8f); lineTo(-11f, -13f); lineTo(-6f, -19f)
+                lineTo(0f, -13f); lineTo(11f, -13f); lineTo(19f, -8f)
+                moveTo(-19f, -8f); quadTo(0f, -4f, 19f, -8f)
+            }
+            canvas.drawPath(roof, paint)
+            canvas.drawLine(-13f, -7f, -13f, 9f, paint)
+            canvas.drawLine(13f, -7f, 13f, 9f, paint)
+            canvas.drawLine(-13f, 9f, 13f, 9f, paint)
+            paint.style = Paint.Style.FILL
+            canvas.restore()
         }
 
         private fun drawPaperTexture(canvas: Canvas, w: Float, h: Float) {
