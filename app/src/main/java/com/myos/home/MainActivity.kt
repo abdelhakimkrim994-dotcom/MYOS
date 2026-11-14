@@ -246,6 +246,7 @@ class MainActivity : Activity(), SensorEventListener {
         }
 
         private fun drawHome(canvas: Canvas) {
+            iconRects.clear()
             canvas.drawColor(paper)
             val w = width.toFloat()
             val h = height.toFloat()
@@ -267,7 +268,7 @@ class MainActivity : Activity(), SensorEventListener {
             // A small calligraphic title is intentionally kept away from the shortcut area.
             paint.color = ink
             paint.textAlign = Paint.Align.RIGHT
-            paint.typeface = Typeface.create("serif", Typeface.BOLD_ITALIC)
+            paint.typeface = Typeface.create("casual", Typeface.BOLD)
             paint.textSize = 42f * scaledDensity
             canvas.drawText("山水", w * 0.88f, h * 0.19f, paint)
             paint.color = sealRed
@@ -345,7 +346,7 @@ class MainActivity : Activity(), SensorEventListener {
 
             paint.color = ink
             paint.textAlign = Paint.Align.CENTER
-            paint.typeface = Typeface.create("serif", Typeface.BOLD_ITALIC)
+            paint.typeface = Typeface.create("casual", Typeface.BOLD)
             paint.textSize = 25f * scaledDensity
             canvas.drawText("应用", w / 2f, h * 0.105f, paint)
             paint.color = fadedInk
