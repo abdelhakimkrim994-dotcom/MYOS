@@ -61,6 +61,10 @@ private class SloshWater(private val density: Float) {
     private var omega = 0f
     private var target = 0f
     private var phase = 0f
+    private var surfaceX = 0f
+    private var surfaceY = 0f
+    private var surfaceTx = 1f
+    private var surfaceTy = 0f
     private val path = Path()
     private val edge = Path()
     private val px = FloatArray(8)
@@ -167,6 +171,10 @@ private class SloshWater(private val density: Float) {
         val sy = h * 0.5f + gy * d
         val tx = gy
         val ty = -gx
+        surfaceX = sx
+        surfaceY = sy
+        surfaceTx = tx
+        surfaceTy = ty
         val extent = kotlin.math.hypot(w, h)
         val amplitude = (2f + minOf(6f, kotlin.math.abs(omega) * 3f)) * density
         path.rewind()
@@ -261,8 +269,18 @@ private class SloshWater(private val density: Float) {
         glint.strokeWidth = 1.2f * density
         glint.alpha = (alpha * 115f).toInt().coerceIn(0, 115)
         causticPath.rewind()
-        causticPath.moveTo(w * 0.22f, h * 0.30f)
-        causticPath.quadTo(w * 0.50f, h * 0.27f + sin(phase) * 3f * density, w * 0.78f, h * 0.30f)
+        val rimHalf = w * 0.22f
+        val ripple = sin(phase) * 2.5f * density
+        causticPath.moveTo(
+            surfaceX - surfaceTx * rimHalf,
+            surfaceY - surfaceTy * rimHalf
+        )
+        causticPath.quadTo(
+            surfaceX + surfaceTx * 0.02f * w - surfaceTy * ripple,
+            surfaceY + surfaceTy * 0.02f * w + surfaceTx * ripple,
+            surfaceX + surfaceTx * rimHalf,
+            surfaceY + surfaceTy * rimHalf
+        )
         canvas.drawPath(causticPath, glint)
     }
 }
