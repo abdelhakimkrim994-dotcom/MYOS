@@ -40,6 +40,8 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
+import android.opengl.GLSurfaceView
+import android.widget.FrameLayout
 import android.view.WindowManager
 import android.view.animation.LinearInterpolator
 import android.view.animation.PathInterpolator
@@ -301,6 +303,8 @@ private class SloshWater(private val density: Float) {
 
 class MainActivity : Activity() {
     private lateinit var launcherView: LauncherView
+    private lateinit var liquidSurface: GLSurfaceView
+    private lateinit var liquidRenderer: LiquidRenderer
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -312,12 +316,34 @@ class MainActivity : Activity() {
             window.decorView.systemUiVisibility =
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
-        launcherView = LauncherView()
-        setContentView(launcherView)
+        liquidRenderer = LiquidRenderer { /* Diagnostics are intentionally hidden in the launcher. */ }
+        liquidSurface = GLSurfaceView(this).apply {
+            setEGLContextClientVersion(3)
+            setRenderer(liquidRenderer)
+            renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
+            preserveEGLContextOnPause = true
+            visibility = View.INVISIBLE
+        }
+        launcherView = LauncherView().apply {
+            onDrawerSceneVisibilityChanged = { visible ->
+                liquidSurface.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+                liquidSurface.renderMode = if (visible) GLSurfaceView.RENDERMODE_CONTINUOUSLY else GLSurfaceView.RENDERMODE_WHEN_DIRTY
+                if (visible) liquidSurface.requestRender()
+            }
+        }
+        val root = FrameLayout(this)
+        root.addView(liquidSurface, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        root.addView(launcherView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        setContentView(root)
     }
 
     override fun onPause() {
         if (::launcherView.isInitialized) launcherView.stopMotionSensors()
+        if (::liquidSurface.isInitialized) liquidSurface.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
         super.onPause()
     }
 
@@ -326,6 +352,7 @@ class MainActivity : Activity() {
         if (::launcherView.isInitialized) {
             launcherView.reloadApps()
             launcherView.startMotionSensors()
+            liquidSurface.renderMode = if (launcherView.drawerProgress > 0f) GLSurfaceView.RENDERMODE_CONTINUOUSLY else GLSurfaceView.RENDERMODE_WHEN_DIRTY
         }
     }
 
@@ -354,6 +381,8 @@ class MainActivity : Activity() {
     private data class HitRect(val bounds: RectF, val app: LaunchableApp)
 
     private inner class LauncherView : View(this@MainActivity) {
+        var onDrawerSceneVisibilityChanged: ((Boolean) -> Unit)? = null
+        private var lastReportedDrawerVisibility = false
         var drawerProgress = 0f
             private set
         val isDrawerOpen: Boolean get() = drawerProgress >= 0.999f
@@ -479,6 +508,8 @@ class MainActivity : Activity() {
         private val wave = WaveShape()
         private val slosh = SloshWater(density)
         private val drawerRevealPath = Path()
+        private val drawerRevealEdgePath = Path()
+        private val drawerRevealEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; alpha = 190; style = Paint.Style.STROKE; strokeWidth = 2.2f * density; strokeCap = Paint.Cap.ROUND }
         private var swipeWavePhase = 0f
         private var swipeWaveEnergy = 0f
         private var homeWaterline = 0f
@@ -515,9 +546,13 @@ class MainActivity : Activity() {
                         latestRoll = kotlin.math.asin(rotationMatrix[6].coerceIn(-1f, 1f))
                         latestPitch = kotlin.math.asin(rotationMatrix[7].coerceIn(-1f, 1f))
                         slosh.setGravity(rotationMatrix[6], rotationMatrix[7], rotationMatrix[8])
+                        liquidRenderer.setGravity(-rotationMatrix[6], rotationMatrix[7], rotationMatrix[8], event.timestamp, rotationMatrix[6], rotationMatrix[7], rotationMatrix[8])
                         updateTilt()
                     }
-                    Sensor.TYPE_LINEAR_ACCELERATION -> detectShake(event.values[0],event.values[1],event.values[2])
+                    Sensor.TYPE_LINEAR_ACCELERATION -> {
+                        detectShake(event.values[0],event.values[1],event.values[2])
+                        liquidRenderer.setShakeAcceleration(event.values[0], event.values[1], event.values[2], event.timestamp)
+                    }
                     Sensor.TYPE_ACCELEROMETER -> {
                         val a=0.82f
                         if(!gravityInitialized) { for(i in 0..2) gravity[i]=event.values[i]; gravityInitialized=true }
@@ -529,6 +564,7 @@ class MainActivity : Activity() {
                         // Use the accelerometer for shake detection even when a rotation-vector sensor exists.
                         detectShake(linearX,linearY,linearZ)
                         if(rotationSensor==null) {
+                            liquidRenderer.setGravity(-gravity[0] / SensorManager.GRAVITY_EARTH, gravity[1] / SensorManager.GRAVITY_EARTH, gravity[2] / SensorManager.GRAVITY_EARTH, event.timestamp, event.values[0] / SensorManager.GRAVITY_EARTH, event.values[1] / SensorManager.GRAVITY_EARTH, event.values[2] / SensorManager.GRAVITY_EARTH)
                             latestRoll=kotlin.math.atan2(gravity[0],gravity[2])
                             latestPitch=kotlin.math.atan2(-gravity[1],sqrt(gravity[0]*gravity[0]+gravity[2]*gravity[2]))
                             updateTilt()
@@ -1162,14 +1198,16 @@ class MainActivity : Activity() {
 
         private fun buildDrawerRevealPath(w: Float, h: Float, baseY: Float) {
             val amplitude = (2.2f + swipeWaveEnergy * 13f) * density
-            val segments = 36
+            val segments = 48
             drawerRevealPath.rewind()
+            drawerRevealEdgePath.rewind()
             for (i in 0..segments) {
                 val t = i / segments.toFloat()
                 val x = t * w
                 val envelope = 0.35f + 0.65f * sin(PI.toFloat() * t)
                 val y = baseY + sin(t * PI.toFloat() * 3.2f + swipeWavePhase) * amplitude * envelope
-                if (i == 0) drawerRevealPath.moveTo(x, y) else drawerRevealPath.lineTo(x, y)
+                if (i == 0) { drawerRevealPath.moveTo(x, y); drawerRevealEdgePath.moveTo(x, y) }
+                else { drawerRevealPath.lineTo(x, y); drawerRevealEdgePath.lineTo(x, y) }
             }
             drawerRevealPath.lineTo(w, h)
             drawerRevealPath.lineTo(0f, h)
@@ -1178,22 +1216,28 @@ class MainActivity : Activity() {
         }
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            if (drawerProgress <= 0f) {
+            val visible = drawerProgress > 0.001f
+            if (visible != lastReportedDrawerVisibility) {
+                lastReportedDrawerVisibility = visible
+                onDrawerSceneVisibilityChanged?.invoke(visible)
+            }
+            if (!visible) {
                 drawHome(canvas)
                 return
             }
             val h = height.toFloat()
             val w = width.toFloat()
             val waterY = h - drawerProgress * h * 1.08f
-            if (drawerProgress < 1f) drawHome(canvas)
-            // Reveal the drawer with a soft, swipe-driven wave edge instead of a flat crop.
-            canvas.save()
             buildDrawerRevealPath(w, h, waterY.coerceAtLeast(0f))
-            canvas.clipPath(drawerRevealPath)
-            drawDrawerBackdrop(canvas)
-            canvas.restore()
-            drawWater(canvas)
-            // The launcher test scene intentionally contains no fish or bubble overlays.
+            if (drawerProgress < 1f) {
+                canvas.save()
+                canvas.clipOutPath(drawerRevealPath)
+                drawHome(canvas)
+                canvas.restore()
+                canvas.drawPath(drawerRevealEdgePath, drawerRevealEdgePaint)
+            }
+            // The Liquid Lab Stage 2 renderer supplies the tank and water beneath this UI layer.
+            // No legacy 2D water, fish, or bubble artwork is drawn in this experiment.
             drawApps(canvas)
         }
 
