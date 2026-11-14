@@ -54,7 +54,9 @@ data class GravityFrame2D(
             }
 
             val inverse = 1f / screenMagnitude
-            return GravityFrame2D(ax * inverse, ay * inverse)
+            // Match the original MYOS screen-space convention: positive device X
+            // tilts the apparent gravity direction toward screen-left.
+            return GravityFrame2D(-ax * inverse, ay * inverse)
         }
     }
 }
