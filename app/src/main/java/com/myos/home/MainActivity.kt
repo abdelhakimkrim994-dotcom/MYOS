@@ -627,11 +627,13 @@ private class WaterGlRenderer : GLSurfaceView.Renderer {
         GLES30.glUniform1f(drawerHandle, drawer)
         GLES30.glUniform1f(timeHandle, (SystemClock.elapsedRealtime() - started) / 1000f)
         GLES30.glUniform1f(shakeHandle, shake)
+        val vertices = vertexBuffer ?: return
+        val indices = indexBuffer ?: return
         GLES30.glEnableVertexAttribArray(positionHandle)
-        vertexBuffer?.position(0)
-        GLES30.glVertexAttribPointer(positionHandle, 2, GLES30.GL_FLOAT, false, 8, vertexBuffer)
-        indexBuffer?.position(0)
-        GLES30.glDrawElements(GLES30.GL_TRIANGLES, indexCount, GLES30.GL_UNSIGNED_SHORT, indexBuffer)
+        vertices.position(0)
+        GLES30.glVertexAttribPointer(positionHandle, 2, GLES30.GL_FLOAT, false, 8, vertices)
+        indices.position(0)
+        GLES30.glDrawElements(GLES30.GL_TRIANGLES, indexCount, GLES30.GL_UNSIGNED_SHORT, indices)
         GLES30.glDisableVertexAttribArray(positionHandle)
     }
 }
@@ -1578,6 +1580,8 @@ class MainActivity : Activity() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             if (drawerProgress <= 0f) {
+                waterGlRenderer.update(0f, slosh.angle, 0f)
+                waterGlView.requestRender()
                 drawHome(canvas)
                 return
             }
