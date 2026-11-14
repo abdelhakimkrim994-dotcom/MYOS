@@ -4,10 +4,13 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ResolveInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
@@ -34,12 +37,10 @@ class MainActivity : Activity(), SensorEventListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-        window.statusBarColor = Color.rgb(242, 237, 225)
-        window.navigationBarColor = Color.rgb(242, 237, 225)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            window.decorView.systemUiVisibility =
-                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        }
+        window.statusBarColor = Color.rgb(12, 12, 15)
+        window.navigationBarColor = Color.rgb(12, 12, 15)
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         launcherView = LauncherView()
@@ -96,6 +97,8 @@ class MainActivity : Activity(), SensorEventListener {
         var isDrawerOpen = false
             private set
 
+        private val wallpaper = BitmapFactory.decodeResource(resources, R.drawable.myos_shanshui_wallpaper)
+        private val homeInk = Color.rgb(242, 239, 231)
         private val paper = Color.rgb(242, 237, 225)
         private val paperShade = Color.rgb(229, 220, 202)
         private val ink = Color.rgb(42, 40, 35)
@@ -247,80 +250,28 @@ class MainActivity : Activity(), SensorEventListener {
 
         private fun drawHome(canvas: Canvas) {
             iconRects.clear()
-            canvas.drawColor(paper)
             val w = width.toFloat()
             val h = height.toFloat()
-            drawPaperTexture(canvas, w, h)
+            canvas.drawColor(Color.rgb(12, 12, 15))
 
-            // Distant ink mountains: pale, broken silhouettes fading into rice-paper mist.
-            val px = parallaxX * 13f * density
-            val py = parallaxY * 9f * density
-            drawRidge(canvas, w, h, 0.30f, 0.48f, Color.rgb(215, 207, 190), px * 0.18f, py * 0.18f, 0.75f)
-            drawRidge(canvas, w, h, 0.38f, 0.57f, Color.rgb(190, 181, 162), px * 0.35f, py * 0.35f, 0.9f)
-
-            // Main mountain peaks and their ink-wash shadow faces.
-            drawPeak(canvas, w, h, w * 0.20f + px * 0.55f, h * 0.43f + py * 0.55f, w * 0.43f, h * 0.39f, Color.rgb(111, 108, 96))
-            drawPeak(canvas, w, h, w * 0.79f + px * 0.62f, h * 0.46f + py * 0.62f, w * 0.36f, h * 0.32f, Color.rgb(132, 127, 112))
-            drawPeak(canvas, w, h, w * 0.50f + px * 0.8f, h * 0.53f + py * 0.8f, w * 0.48f, h * 0.24f, Color.rgb(157, 149, 130))
-
-            // Mist cuts through the valleys instead of forming flat graphic bands.
-            paint.style = Paint.Style.FILL
-            paint.color = Color.argb(190, 242, 237, 225)
-            val mist = Path().apply {
-                moveTo(-w * 0.1f, h * 0.48f)
-                cubicTo(w * 0.12f, h * 0.42f, w * 0.25f, h * 0.53f, w * 0.43f, h * 0.48f)
-                cubicTo(w * 0.62f, h * 0.43f, w * 0.77f, h * 0.54f, w * 1.1f, h * 0.46f)
-                lineTo(w * 1.1f, h * 0.60f)
-                cubicTo(w * 0.78f, h * 0.65f, w * 0.62f, h * 0.56f, w * 0.40f, h * 0.62f)
-                cubicTo(w * 0.18f, h * 0.66f, w * 0.04f, h * 0.57f, -w * 0.1f, h * 0.62f)
-                close()
+            // Center-crop the approved artwork to fill the screen without stretching it.
+            val imageAspect = wallpaper.width.toFloat() / wallpaper.height.toFloat()
+            val viewAspect = w / h
+            val src = if (imageAspect > viewAspect) {
+                val cropWidth = (wallpaper.height * viewAspect).toInt().coerceAtLeast(1)
+                val left = (wallpaper.width - cropWidth) / 2
+                Rect(left, 0, left + cropWidth, wallpaper.height)
+            } else {
+                val cropHeight = (wallpaper.width / viewAspect).toInt().coerceAtLeast(1)
+                val top = (wallpaper.height - cropHeight) / 2
+                Rect(0, top, wallpaper.width, top + cropHeight)
             }
-            canvas.drawPath(mist, paint)
-
-            // Thin waterfalls and a winding river lead the eye into the scene.
-            drawWaterfall(canvas, w * 0.28f + px * 0.55f, h * 0.48f, h * 0.67f)
-            drawWaterfall(canvas, w * 0.75f + px * 0.6f, h * 0.50f, h * 0.65f)
-            paint.color = Color.argb(115, 78, 86, 82)
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 2.2f * density
-            paint.strokeCap = Paint.Cap.ROUND
-            val river = Path().apply {
-                moveTo(w * 0.49f + px, h * 0.61f + py)
-                cubicTo(w * 0.43f + px, h * 0.69f, w * 0.62f + px, h * 0.72f, w * 0.52f, h * 0.80f)
-                cubicTo(w * 0.46f, h * 0.85f, w * 0.54f, h * 0.88f, w * 0.48f, h * 0.91f)
-            }
-            canvas.drawPath(river, paint)
-            paint.strokeWidth = 0.8f * density
-            canvas.drawPath(Path().apply {
-                moveTo(w * 0.53f + px, h * 0.63f + py)
-                cubicTo(w * 0.50f, h * 0.70f, w * 0.67f, h * 0.75f, w * 0.57f, h * 0.81f)
-            }, paint)
-            paint.style = Paint.Style.FILL
-
-            // Foreground ink rocks frame the scene without filling the central negative space.
-            drawForegroundRock(canvas, w * 0.03f, h * 0.77f, w * 0.39f, h * 0.16f, true)
-            drawForegroundRock(canvas, w * 0.98f, h * 0.75f, w * 0.36f, h * 0.19f, false)
-            drawPine(canvas, w * 0.12f + px, h * 0.70f, 0.92f)
-            drawPine(canvas, w * 0.88f + px, h * 0.68f, 0.78f)
-            drawPavilion(canvas, w * 0.67f + px * 0.45f, h * 0.57f, 0.72f)
-
-            // Small calligraphic title and vermilion seal.
-            paint.color = ink
-            paint.textAlign = Paint.Align.RIGHT
-            paint.typeface = Typeface.create("casual", Typeface.BOLD)
-            paint.textSize = 39f * scaledDensity
-            canvas.drawText("山水", w * 0.89f, h * 0.16f, paint)
-            paint.color = sealRed
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 1.5f * density
-            val seal = RectF(w * 0.80f, h * 0.175f, w * 0.91f, h * 0.215f)
-            canvas.drawRect(seal, paint)
-            paint.style = Paint.Style.FILL
-            paint.textAlign = Paint.Align.CENTER
-            paint.typeface = Typeface.create("serif", Typeface.BOLD)
-            paint.textSize = 8f * scaledDensity
-            canvas.drawText("山", seal.centerX(), seal.centerY() + 3f * density, paint)
-
+            val offsetX = -parallaxX * 7f * density
+            val offsetY = -parallaxY * 7f * density
+            val dst = Rect(offsetX.toInt(), offsetY.toInt(), (w - offsetX).toInt(), (h - offsetY).toInt())
+            paint.isFilterBitmap = true
+            canvas.drawBitmap(wallpaper, src, dst, paint)
+            paint.clearShadowLayer()
             drawHomeDock(canvas, w, h)
         }
 
@@ -490,19 +441,23 @@ class MainActivity : Activity(), SensorEventListener {
             val centerY = h * 0.86f
             homeApps.forEachIndexed { index, app ->
                 val cx = spacing * (index + 1)
-                drawInkIcon(canvas, app.kind, app.icon, cx, centerY - 5f * density, iconSize)
-                paint.color = ink
+                drawInkIcon(canvas, app.kind, app.icon, cx, centerY - 5f * density, iconSize, homeInk)
+                paint.color = homeInk
+                paint.setShadowLayer(3f * density, 0f, 1f * density, Color.BLACK)
                 paint.textAlign = Paint.Align.CENTER
                 paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
                 paint.textSize = 9f * scaledDensity
                 val label = if (app.label.length > 10) app.label.take(9) + "…" else app.label
                 canvas.drawText(label, cx, centerY + iconSize * 0.82f, paint)
+                paint.clearShadowLayer()
                 iconRects.add(Pair(RectF(cx - iconSize, centerY - iconSize, cx + iconSize, centerY + iconSize), app))
             }
-            paint.color = fadedInk
+            paint.color = homeInk
+            paint.setShadowLayer(3f * density, 0f, 1f * density, Color.BLACK)
             paint.textAlign = Paint.Align.CENTER
             paint.textSize = 10f * scaledDensity
             canvas.drawText("↑", w / 2f, h * 0.965f, paint)
+            paint.clearShadowLayer()
         }
 
         private fun drawDrawer(canvas: Canvas) {
@@ -560,7 +515,7 @@ class MainActivity : Activity(), SensorEventListener {
             }
         }
 
-        private fun drawInkIcon(canvas: Canvas, kind: IconKind?, fallback: Drawable, cx: Float, cy: Float, size: Float) {
+        private fun drawInkIcon(canvas: Canvas, kind: IconKind?, fallback: Drawable, cx: Float, cy: Float, size: Float, foregroundColor: Int = ink) {
             if (kind == null) {
                 fallback.setBounds((cx - size * 0.43f).toInt(), (cy - size * 0.43f).toInt(), (cx + size * 0.43f).toInt(), (cy + size * 0.43f).toInt())
                 fallback.draw(canvas)
@@ -570,7 +525,7 @@ class MainActivity : Activity(), SensorEventListener {
             canvas.save()
             canvas.translate(cx, cy)
             canvas.scale(size / 48f, size / 48f)
-            paint.color = ink
+            paint.color = foregroundColor
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 2.15f
             paint.strokeCap = Paint.Cap.ROUND
