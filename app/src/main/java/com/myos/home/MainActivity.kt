@@ -57,10 +57,10 @@ import kotlin.math.sqrt
  */
 private class SloshWater(private val density: Float) {
     var fill = 0.45f
-    private var theta = 0f
-    private var omega = 0f
-    private var target = 0f
-    private var phase = 0f
+    private val simulation = WaterSurfaceSimulation2D(fillFraction = 0.45f)
+    private val theta: Float get() = simulation.angleRadians
+    private val omega: Float get() = simulation.angularVelocity
+    private val phase: Float get() = simulation.wavePhase
     private var surfaceX = 0f
     private var surfaceY = 0f
     private var surfaceTx = 1f
@@ -116,77 +116,38 @@ private class SloshWater(private val density: Float) {
     val verticalMotion: Float get() = (1f - kotlin.math.cos(theta)).coerceIn(-1f, 1f)
     val angularVelocity: Float get() = omega
 
-    /** Gravity vector in device coordinates; rotation-matrix row 3 or filtered accelerometer gravity. */
+    /** Gravity vector in device coordinates; follows the Stage 2 sign convention. */
     fun setGravity(ax: Float, ay: Float, az: Float) {
-        val magnitude = kotlin.math.sqrt(ax * ax + ay * ay + az * az)
-        if (magnitude < 1e-3f || kotlin.math.hypot(ax, ay) / magnitude < 0.25f) return
-        target = kotlin.math.atan2(-ax, ay)
+        simulation.setGravity(ax, ay, az)
     }
 
     fun kick(strength: Float) {
-        omega = (omega + strength.coerceIn(0f, 2f) * 4f).coerceIn(-9f, 9f)
+        simulation.addImpulse(strength.coerceIn(0f, 2f) * 4f)
     }
 
     fun step(dt: Float) {
-        var delta = target - theta
-        while (delta > Math.PI) delta -= (2f * Math.PI.toFloat())
-        while (delta < -Math.PI) delta += (2f * Math.PI.toFloat())
-        omega += (delta * 38f - omega * 4.2f) * dt
-        omega = omega.coerceIn(-9f, 9f)
-        theta += omega * dt
-        phase += dt * (1.6f + kotlin.math.abs(omega))
-    }
-
-    private fun area(d: Float, w: Float, h: Float, gx: Float, gy: Float): Float {
-        px[0] = 0f; py[0] = 0f
-        px[1] = w; py[1] = 0f
-        px[2] = w; py[2] = h
-        px[3] = 0f; py[3] = h
-        var count = 0
-        for (i in 0 until 4) {
-            val j = (i + 1) % 4
-            val da = (px[i] - w / 2f) * gx + (py[i] - h / 2f) * gy - d
-            val db = (px[j] - w / 2f) * gx + (py[j] - h / 2f) * gy - d
-            if (da >= 0f) { qx[count] = px[i]; qy[count] = py[i]; count++ }
-            if ((da >= 0f) != (db >= 0f)) {
-                val t = da / (da - db)
-                qx[count] = px[i] + (px[j] - px[i]) * t
-                qy[count] = py[i] + (py[j] - py[i]) * t
-                count++
-            }
-        }
-        var twiceArea = 0f
-        for (i in 0 until count) {
-            val j = (i + 1) % count
-            twiceArea += qx[i] * qy[j] - qx[j] * qy[i]
-        }
-        return kotlin.math.abs(twiceArea) * 0.5f
+        simulation.advance(dt)
     }
 
     private fun buildPath(w: Float, h: Float) {
-        val gx = kotlin.math.sin(theta)
-        val gy = kotlin.math.cos(theta)
-        var low = -kotlin.math.hypot(w, h) * 0.5f
-        var high = -low
-        val targetArea = fill.coerceIn(0.05f, 0.95f) * w * h
-        repeat(16) {
-            val mid = (low + high) * 0.5f
-            if (area(mid, w, h, gx, gy) > targetArea) low = mid else high = mid
-        }
-        val d = (low + high) * 0.5f
-        gravityX = gx
-        gravityY = gy
-        surfaceDistance = d
-        val sx = w * 0.5f + gx * d
-        val sy = h * 0.5f + gy * d
-        val tx = gy
-        val ty = -gx
+        val plane = simulation.solveSurface(w, h) ?: return
+        val nx = plane.normalX
+        val ny = plane.normalY
+        val sx = plane.centerX + nx * plane.offset
+        val sy = plane.centerY + ny * plane.offset
+        val tx = plane.tangentX
+        val ty = plane.tangentY
+        val downX = -nx
+        val downY = -ny
+        gravityX = downX
+        gravityY = downY
+        surfaceDistance = -plane.offset
         surfaceX = sx
         surfaceY = sy
         surfaceTx = tx
         surfaceTy = ty
+
         val extent = kotlin.math.hypot(w, h)
-        // Broader travelling waves give the free surface a visible curved profile.
         val amplitude = (5f + minOf(15f, kotlin.math.abs(omega) * 5.5f)) * density
         path.rewind()
         edge.rewind()
@@ -199,13 +160,13 @@ private class SloshWater(private val density: Float) {
                 kotlin.math.sin(u / (29f * density) - waveTravel * 1.27f) * 0.27f +
                 kotlin.math.sin(u / (105f * density) + waveTravel * 0.42f) * 0.15f
             )
-            val x = sx + tx * u - gx * offset
-            val y = sy + ty * u - gy * offset
+            val x = sx + tx * u + nx * offset
+            val y = sy + ty * u + ny * offset
             if (i == 0) { path.moveTo(x, y); edge.moveTo(x, y) }
             else { path.lineTo(x, y); edge.lineTo(x, y) }
         }
-        path.lineTo(sx + tx * extent + gx * extent, sy + ty * extent + gy * extent)
-        path.lineTo(sx - tx * extent + gx * extent, sy - ty * extent + gy * extent)
+        path.lineTo(sx + tx * extent + downX * extent, sy + ty * extent + downY * extent)
+        path.lineTo(sx - tx * extent + downX * extent, sy - ty * extent + downY * extent)
         path.close()
         matrix.setScale(1f, 420f * density)
         matrix.postRotate(-Math.toDegrees(theta.toDouble()).toFloat())
