@@ -339,6 +339,16 @@ class MainActivity : Activity() {
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
         ))
         setContentView(root)
+
+        // Render the expensive liquid shader at 85% linear resolution.
+        // SurfaceView scales this buffer to the full-size view, preserving its aspect ratio.
+        liquidSurface.post {
+            val renderWidth = (liquidSurface.width * 0.85f).toInt().coerceAtLeast(1)
+            val renderHeight = (liquidSurface.height * 0.85f).toInt().coerceAtLeast(1)
+            if (renderWidth > 0 && renderHeight > 0) {
+                liquidSurface.holder.setFixedSize(renderWidth, renderHeight)
+            }
+        }
     }
 
     override fun onPause() {
