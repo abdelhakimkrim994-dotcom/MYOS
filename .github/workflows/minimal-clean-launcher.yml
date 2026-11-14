@@ -3,6 +3,8 @@ name: MYOS minimal launcher build
 on:
   push:
     branches: [experiment/minimal-clean-launcher]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
