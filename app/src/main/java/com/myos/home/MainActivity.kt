@@ -146,18 +146,16 @@ private class SloshWater(private val density: Float) {
         surfaceTy = ty
 
         val extent = kotlin.math.hypot(w, h)
-        val amplitude = (5f + minOf(15f, kotlin.math.abs(omega) * 5.5f)) * density
+        val waveScale = min(w, h)
         path.rewind()
         edge.rewind()
         val segments = 80
         for (i in 0..segments) {
-            val u = (i / segments.toFloat() * 2f - 1f) * extent
-            val waveTravel = phase * (0.72f + kotlin.math.abs(omega) * 0.08f)
-            val offset = amplitude * (
-                kotlin.math.sin(u / (58f * density) + waveTravel) * 0.58f +
-                kotlin.math.sin(u / (29f * density) - waveTravel * 1.27f) * 0.27f +
-                kotlin.math.sin(u / (105f * density) + waveTravel * 0.42f) * 0.15f
-            )
+            val normalized = i / segments.toFloat() * 2f - 1f
+            val u = normalized * extent
+            // The contour now samples the simulation's propagated wave field.
+            // No independent decorative sine is added by the renderer.
+            val offset = simulation.waveHeightAt(normalized) * waveScale
             val x = sx + tx * u + nx * offset
             val y = sy + ty * u + ny * offset
             if (i == 0) { path.moveTo(x, y); edge.moveTo(x, y) }
