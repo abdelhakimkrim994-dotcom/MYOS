@@ -176,15 +176,18 @@ private class SloshWater(private val density: Float) {
         surfaceTx = tx
         surfaceTy = ty
         val extent = kotlin.math.hypot(w, h)
-        val amplitude = (2f + minOf(6f, kotlin.math.abs(omega) * 3f)) * density
+        // Broader travelling waves give the free surface a visible curved profile.
+        val amplitude = (5f + minOf(15f, kotlin.math.abs(omega) * 5.5f)) * density
         path.rewind()
         edge.rewind()
         val segments = 80
         for (i in 0..segments) {
             val u = (i / segments.toFloat() * 2f - 1f) * extent
+            val waveTravel = phase * (0.72f + kotlin.math.abs(omega) * 0.08f)
             val offset = amplitude * (
-                kotlin.math.sin(u / (40f * density) + phase) * 0.7f +
-                kotlin.math.sin(u / (23f * density) - phase * 1.3f) * 0.3f
+                kotlin.math.sin(u / (58f * density) + waveTravel) * 0.58f +
+                kotlin.math.sin(u / (29f * density) - waveTravel * 1.27f) * 0.27f +
+                kotlin.math.sin(u / (105f * density) + waveTravel * 0.42f) * 0.15f
             )
             val x = sx + tx * u - gx * offset
             val y = sy + ty * u - gy * offset
@@ -215,14 +218,14 @@ private class SloshWater(private val density: Float) {
 
         // Layer 2: darkened side walls create the illusion of thickness and rounded volume.
         depth.shader = LinearGradient(
-            0f, 0f, w, 0f,
+            0f, 0f, 0f, h,
             intArrayOf(
+                Color.argb(8, 0, 44, 70),
+                Color.argb(24, 0, 55, 82),
                 Color.argb(112, 0, 35, 67),
-                Color.argb(0, 0, 35, 67),
-                Color.argb(0, 0, 35, 67),
-                Color.argb(112, 0, 35, 67)
+                Color.argb(188, 0, 23, 54)
             ),
-            floatArrayOf(0f, 0.24f, 0.76f, 1f),
+            floatArrayOf(0f, 0.24f, 0.72f, 1f),
             Shader.TileMode.CLAMP
         )
         depth.alpha = (alpha * 220f).toInt().coerceIn(0, 220)
@@ -232,12 +235,12 @@ private class SloshWater(private val density: Float) {
         // Layer 3: refracted caustic ribbons inside the liquid, moving at different depths.
         canvas.save()
         canvas.clipPath(path)
-        for (i in 0 until 11) {
-            val depthFactor = 0.16f + (i % 6) * 0.135f
+        for (i in 0 until 16) {
+            val depthFactor = 0.12f + (i % 8) * 0.105f
             val y = h * (1f - fill * depthFactor)
-            val x = ((i * 0.173f + phase * (0.025f + (i % 3) * 0.009f)) % 1.2f - 0.1f) * w
-            val length = w * (0.10f + (i % 4) * 0.035f)
-            val sway = sin(phase * 0.65f + i * 1.7f) * 10f * density
+            val x = ((i * 0.137f + phase * (0.018f + (i % 3) * 0.006f)) % 1.2f - 0.1f) * w
+            val length = w * (0.08f + (i % 5) * 0.032f)
+            val sway = sin(phase * 0.52f + i * 1.7f) * (7f + depthFactor * 8f) * density
             causticPath.rewind()
             causticPath.moveTo(x, y + sway)
             causticPath.cubicTo(
@@ -403,6 +406,16 @@ class MainActivity : Activity() {
             color = Color.rgb(14, 124, 140)
         }
         private val drawerBackdropPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val glassEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 1.4f * density
+            color = Color.WHITE
+        }
+        private val glassGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 5f * density
+            color = Color.WHITE
+        }
         private val backdropDetailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
@@ -1013,6 +1026,29 @@ class MainActivity : Activity() {
             slosh.draw(canvas, width.toFloat(), height.toFloat(), drawerProgress)
         }
 
+        // The phone screen acts as the clear vessel: fixed bevels and edge reflections
+        // create a sense of glass thickness without moving the drawer background.
+        private fun drawGlassDepthFrame(canvas: Canvas) {
+            val inset = 3.5f * density
+            val w = width.toFloat()
+            val h = height.toFloat()
+            val left = inset
+            val top = inset
+            val right = w - inset
+            val bottom = h - inset
+            glassGlowPaint.alpha = 24
+            canvas.drawRoundRect(left, top, right, bottom, 18f * density, 18f * density, glassGlowPaint)
+            glassEdgePaint.alpha = 82
+            canvas.drawRoundRect(left, top, right, bottom, 18f * density, 18f * density, glassEdgePaint)
+            // Stronger vertical edge glints suggest curved transparent side walls.
+            glassGlowPaint.alpha = 34
+            canvas.drawLine(left + 2f * density, top + 28f * density, left + 2f * density, bottom - 34f * density, glassGlowPaint)
+            canvas.drawLine(right - 2f * density, top + 28f * density, right - 2f * density, bottom - 34f * density, glassGlowPaint)
+            glassEdgePaint.alpha = 108
+            canvas.drawLine(left + 1.5f * density, top + 32f * density, left + 1.5f * density, bottom - 38f * density, glassEdgePaint)
+            canvas.drawLine(right - 1.5f * density, top + 32f * density, right - 1.5f * density, bottom - 38f * density, glassEdgePaint)
+        }
+
         private fun drawWaterLife(canvas:Canvas) {
             if(!weatherConfirmed || raftAnimator?.isRunning!=true || drawerProgress<0.85f) return
             val now=(SystemClock.uptimeMillis()-raftStartTime)/1000f; val w=width.toFloat(); val h=height.toFloat()
@@ -1179,6 +1215,7 @@ class MainActivity : Activity() {
             drawMotionDebug(canvas)
             drawWaterLife(canvas)
             drawApps(canvas)
+            drawGlassDepthFrame(canvas)
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
