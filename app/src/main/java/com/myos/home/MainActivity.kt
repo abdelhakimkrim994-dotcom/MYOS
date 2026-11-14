@@ -56,7 +56,9 @@ import kotlin.math.sqrt
  * Its free surface responds to gravity while the drawer scenery remains stationary.
  */
 private class SloshWater(private val density: Float) {
-    var fill = 0.45f
+    var fill: Float
+        get() = simulation.fillFraction
+        set(value) { simulation.fillFraction = value }
     private val simulation = WaterSurfaceSimulation2D(fillFraction = 0.45f)
     private val theta: Float get() = simulation.angleRadians
     private val omega: Float get() = simulation.angularVelocity
@@ -74,10 +76,6 @@ private class SloshWater(private val density: Float) {
     val angle: Float get() = theta
     private val path = Path()
     private val edge = Path()
-    private val px = FloatArray(8)
-    private val py = FloatArray(8)
-    private val qx = FloatArray(8)
-    private val qy = FloatArray(8)
     private val matrix = Matrix()
     private val gradient = LinearGradient(
         0f, 0f, 0f, 1f,
