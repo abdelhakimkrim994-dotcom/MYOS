@@ -15,8 +15,8 @@ android {
         applicationId = "com.myos.home"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.1.0"
+        versionCode = 15
+        versionName = "1.2.0"
     }
 
     signingConfigs {
