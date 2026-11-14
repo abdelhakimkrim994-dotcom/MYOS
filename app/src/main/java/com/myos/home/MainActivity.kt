@@ -40,6 +40,8 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
+import android.opengl.GLSurfaceView
+import android.widget.FrameLayout
 import android.view.WindowManager
 import android.view.animation.LinearInterpolator
 import android.view.animation.PathInterpolator
@@ -301,6 +303,8 @@ private class SloshWater(private val density: Float) {
 
 class MainActivity : Activity() {
     private lateinit var launcherView: LauncherView
+    private lateinit var liquidSurface: GLSurfaceView
+    private lateinit var liquidRenderer: LiquidRenderer
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -312,12 +316,44 @@ class MainActivity : Activity() {
             window.decorView.systemUiVisibility =
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
-        launcherView = LauncherView()
-        setContentView(launcherView)
+        liquidRenderer = LiquidRenderer { /* Diagnostics are intentionally hidden in the launcher. */ }
+        liquidSurface = GLSurfaceView(this).apply {
+            setEGLContextClientVersion(3)
+            setRenderer(liquidRenderer)
+            renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
+            preserveEGLContextOnPause = true
+            visibility = View.INVISIBLE
+        }
+        launcherView = LauncherView().apply {
+            onDrawerSceneVisibilityChanged = { visible ->
+                liquidSurface.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+                liquidSurface.renderMode = if (visible) GLSurfaceView.RENDERMODE_CONTINUOUSLY else GLSurfaceView.RENDERMODE_WHEN_DIRTY
+                if (visible) liquidSurface.requestRender()
+            }
+        }
+        val root = FrameLayout(this)
+        root.addView(liquidSurface, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        root.addView(launcherView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        setContentView(root)
+
+        // Render the expensive liquid shader at 85% linear resolution.
+        // SurfaceView scales this buffer to the full-size view, preserving its aspect ratio.
+        liquidSurface.post {
+            val renderWidth = (liquidSurface.width * 0.85f).toInt().coerceAtLeast(1)
+            val renderHeight = (liquidSurface.height * 0.85f).toInt().coerceAtLeast(1)
+            if (renderWidth > 0 && renderHeight > 0) {
+                liquidSurface.holder.setFixedSize(renderWidth, renderHeight)
+            }
+        }
     }
 
     override fun onPause() {
         if (::launcherView.isInitialized) launcherView.stopMotionSensors()
+        if (::liquidSurface.isInitialized) liquidSurface.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
         super.onPause()
     }
 
@@ -326,6 +362,7 @@ class MainActivity : Activity() {
         if (::launcherView.isInitialized) {
             launcherView.reloadApps()
             launcherView.startMotionSensors()
+            liquidSurface.renderMode = if (launcherView.drawerProgress > 0f) GLSurfaceView.RENDERMODE_CONTINUOUSLY else GLSurfaceView.RENDERMODE_WHEN_DIRTY
         }
     }
 
@@ -354,6 +391,8 @@ class MainActivity : Activity() {
     private data class HitRect(val bounds: RectF, val app: LaunchableApp)
 
     private inner class LauncherView : View(this@MainActivity) {
+        var onDrawerSceneVisibilityChanged: ((Boolean) -> Unit)? = null
+        private var lastReportedDrawerVisibility = false
         var drawerProgress = 0f
             private set
         val isDrawerOpen: Boolean get() = drawerProgress >= 0.999f
@@ -392,8 +431,6 @@ class MainActivity : Activity() {
         private var weatherLoading = false
         private val skyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val weatherDetailPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val lifePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val fishColors = intArrayOf(Color.rgb(255,132,65),Color.rgb(255,211,74),Color.rgb(79,205,190),Color.rgb(94,165,255),Color.rgb(255,112,145),Color.rgb(181,139,255))
         private val scaledDensity = resources.displayMetrics.scaledDensity
         private val ivory = Color.rgb(250, 248, 243)
         private val white = Color.WHITE
@@ -478,6 +515,11 @@ class MainActivity : Activity() {
         }
         private val wave = WaveShape()
         private val slosh = SloshWater(density)
+        private val drawerRevealPath = Path()
+        private val drawerRevealEdgePath = Path()
+        private val drawerRevealEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; alpha = 190; style = Paint.Style.STROKE; strokeWidth = 2.2f * density; strokeCap = Paint.Cap.ROUND }
+        private var swipeWavePhase = 0f
+        private var swipeWaveEnergy = 0f
         private var homeWaterline = 0f
         private var fadeShader: LinearGradient? = null
         private var tintShader: LinearGradient? = null
@@ -512,9 +554,13 @@ class MainActivity : Activity() {
                         latestRoll = kotlin.math.asin(rotationMatrix[6].coerceIn(-1f, 1f))
                         latestPitch = kotlin.math.asin(rotationMatrix[7].coerceIn(-1f, 1f))
                         slosh.setGravity(rotationMatrix[6], rotationMatrix[7], rotationMatrix[8])
+                        liquidRenderer.setGravity(-rotationMatrix[6], rotationMatrix[7], rotationMatrix[8], event.timestamp, rotationMatrix[6], rotationMatrix[7], rotationMatrix[8])
                         updateTilt()
                     }
-                    Sensor.TYPE_LINEAR_ACCELERATION -> detectShake(event.values[0],event.values[1],event.values[2])
+                    Sensor.TYPE_LINEAR_ACCELERATION -> {
+                        detectShake(event.values[0],event.values[1],event.values[2])
+                        liquidRenderer.setShakeAcceleration(event.values[0], event.values[1], event.values[2], event.timestamp)
+                    }
                     Sensor.TYPE_ACCELEROMETER -> {
                         val a=0.82f
                         if(!gravityInitialized) { for(i in 0..2) gravity[i]=event.values[i]; gravityInitialized=true }
@@ -526,6 +572,7 @@ class MainActivity : Activity() {
                         // Use the accelerometer for shake detection even when a rotation-vector sensor exists.
                         detectShake(linearX,linearY,linearZ)
                         if(rotationSensor==null) {
+                            liquidRenderer.setGravity(-gravity[0] / SensorManager.GRAVITY_EARTH, gravity[1] / SensorManager.GRAVITY_EARTH, gravity[2] / SensorManager.GRAVITY_EARTH, event.timestamp, event.values[0] / SensorManager.GRAVITY_EARTH, event.values[1] / SensorManager.GRAVITY_EARTH, event.values[2] / SensorManager.GRAVITY_EARTH)
                             latestRoll=kotlin.math.atan2(gravity[0],gravity[2])
                             latestPitch=kotlin.math.atan2(-gravity[1],sqrt(gravity[0]*gravity[0]+gravity[2]*gravity[2]))
                             updateTilt()
@@ -1026,43 +1073,6 @@ class MainActivity : Activity() {
             canvas.drawLine(right - 1.5f * density, top + 32f * density, right - 1.5f * density, bottom - 38f * density, glassEdgePaint)
         }
 
-        private fun drawWaterLife(canvas:Canvas) {
-            if (raftAnimator?.isRunning != true || drawerProgress < 0.85f) return
-            val now = (SystemClock.uptimeMillis() - raftStartTime) / 1000f
-            val w = width.toFloat()
-            val h = height.toFloat()
-            canvas.save()
-            slosh.clipToWater(canvas, w, h)
-            for(i in 0 until 8) {
-                val seed=i*0.731f; val direction=if(i%2==0) 1f else -1f; val speed=10f+(i%4)*4f
-                val travel=now*speed*direction+seed*w*1.8f; val span=w+70f*density
-                val x=((travel%span)+span)%span-35f*density
-                val y=h*(1f-slosh.fill*(0.12f+(i%5)*0.16f))+sin(now*0.7f+seed*8f)*9f*density
-                val size=(10f+(i%3)*2.5f)*density; val wag=sin(now*5f+seed*11f)*size*0.22f
-                val saved=canvas.save(); canvas.translate(x,y); canvas.scale(direction,1f)
-                val body=Path().apply { moveTo(-size*0.48f,0f); cubicTo(-size*0.22f,-size*0.42f,size*0.34f,-size*0.35f,size*0.48f,0f); cubicTo(size*0.30f,size*0.34f,-size*0.22f,size*0.40f,-size*0.48f,0f); close() }
-                lifePaint.style=Paint.Style.FILL; lifePaint.color=fishColors[i%fishColors.size]; lifePaint.alpha=if(i<3) 175 else 220; canvas.drawPath(body,lifePaint)
-                val dorsal=Path().apply { moveTo(-size*0.18f,-size*0.22f); cubicTo(0f,-size*0.48f,size*0.28f,-size*0.42f,size*0.37f,-size*0.16f); close() }
-                canvas.drawPath(dorsal,lifePaint)
-                val ventral=Path().apply { moveTo(-size*0.05f,size*0.22f); lineTo(size*0.22f,size*0.34f+wag*0.12f); lineTo(size*0.27f,size*0.18f); close() }
-                canvas.drawPath(ventral,lifePaint)
-                val tail=Path().apply { moveTo(-size*0.40f,0f); cubicTo(-size*0.56f,-size*0.12f,-size*0.70f,-size*0.34f+wag,-size*0.88f,-size*0.30f+wag); cubicTo(-size*0.78f,wag*0.2f,-size*0.72f,size*0.30f+wag,-size*0.88f,size*0.32f+wag); cubicTo(-size*0.62f,size*0.25f,-size*0.50f,size*0.10f,-size*0.40f,0f); close() }
-                canvas.drawPath(tail,lifePaint)
-                weatherDetailPaint.color=Color.argb(100,18,43,54)
-                val pectoral=Path().apply { moveTo(size*0.02f,size*0.03f); lineTo(size*0.22f,size*0.27f+wag*0.1f); lineTo(size*0.30f,size*0.02f); close() }
-                canvas.drawPath(pectoral,weatherDetailPaint)
-                weatherDetailPaint.style=Paint.Style.STROKE; weatherDetailPaint.strokeWidth=0.65f*density
-                weatherDetailPaint.color=Color.argb(105,255,255,255)
-                canvas.drawLine(-size*0.18f,0f,size*0.28f,0f,weatherDetailPaint)
-                canvas.drawArc(size*0.12f,-size*0.18f,size*0.35f,size*0.18f,80f,190f,false,weatherDetailPaint)
-                weatherDetailPaint.style=Paint.Style.FILL
-                lifePaint.color=Color.WHITE; lifePaint.alpha=235; canvas.drawCircle(size*0.27f,-size*0.09f,size*0.055f,lifePaint)
-                lifePaint.color=Color.rgb(28,55,65); canvas.drawCircle(size*0.29f,-size*0.09f,size*0.027f,lifePaint); canvas.restoreToCount(saved)
-            }
-            canvas.restore()
-            lifePaint.alpha = 255
-        }
-
         private fun drawApps(canvas: Canvas) {
             val w = width.toFloat()
             val h = height.toFloat()
@@ -1157,23 +1167,48 @@ class MainActivity : Activity() {
             iconShadowPaint.alpha = 26
         }
 
+        private fun buildDrawerRevealPath(w: Float, h: Float, baseY: Float) {
+            val amplitude = (2.2f + swipeWaveEnergy * 13f) * density
+            val segments = 48
+            drawerRevealPath.rewind()
+            drawerRevealEdgePath.rewind()
+            for (i in 0..segments) {
+                val t = i / segments.toFloat()
+                val x = t * w
+                val envelope = 0.35f + 0.65f * sin(PI.toFloat() * t)
+                val y = baseY + sin(t * PI.toFloat() * 3.2f + swipeWavePhase) * amplitude * envelope
+                if (i == 0) { drawerRevealPath.moveTo(x, y); drawerRevealEdgePath.moveTo(x, y) }
+                else { drawerRevealPath.lineTo(x, y); drawerRevealEdgePath.lineTo(x, y) }
+            }
+            drawerRevealPath.lineTo(w, h)
+            drawerRevealPath.lineTo(0f, h)
+            drawerRevealPath.close()
+            swipeWaveEnergy *= 0.94f
+        }
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            if (drawerProgress <= 0f) {
+            val visible = drawerProgress > 0.001f
+            if (visible != lastReportedDrawerVisibility) {
+                lastReportedDrawerVisibility = visible
+                onDrawerSceneVisibilityChanged?.invoke(visible)
+            }
+            if (!visible) {
                 drawHome(canvas)
                 return
             }
             val h = height.toFloat()
             val w = width.toFloat()
             val waterY = h - drawerProgress * h * 1.08f
-            if (drawerProgress < 1f) drawHome(canvas)
-            // The drawer backdrop is a fixed scene. Only the liquid and fish respond to gravity.
-            canvas.save()
-            canvas.clipRect(0f, waterY.coerceAtLeast(0f), w, h)
-            drawDrawerBackdrop(canvas)
-            canvas.restore()
-            drawWater(canvas)
-            drawWaterLife(canvas)
+            buildDrawerRevealPath(w, h, waterY.coerceAtLeast(0f))
+            if (drawerProgress < 1f) {
+                canvas.save()
+                canvas.clipOutPath(drawerRevealPath)
+                drawHome(canvas)
+                canvas.restore()
+                canvas.drawPath(drawerRevealEdgePath, drawerRevealEdgePaint)
+            }
+            // The Liquid Lab Stage 2 renderer supplies the tank and water beneath this UI layer.
+            // No legacy 2D water, fish, or bubble artwork is drawn in this experiment.
             drawApps(canvas)
         }
 
@@ -1201,6 +1236,9 @@ class MainActivity : Activity() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     velocityTracker?.addMovement(event)
+                    val dragDelta = event.y - lastY
+                    swipeWavePhase += dragDelta / (24f * density)
+                    swipeWaveEnergy = (swipeWaveEnergy + abs(dragDelta) / (18f * density)).coerceIn(0f, 1f)
                     val dy = event.y - downY
                     when (gestureMode) {
                         GestureMode.OPENING -> {
