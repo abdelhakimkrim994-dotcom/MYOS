@@ -421,8 +421,6 @@ class MainActivity : Activity() {
         private var weatherLoading = false
         private val skyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val weatherDetailPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val lifePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val fishColors = intArrayOf(Color.rgb(255,132,65),Color.rgb(255,211,74),Color.rgb(79,205,190),Color.rgb(94,165,255),Color.rgb(255,112,145),Color.rgb(181,139,255))
         private val scaledDensity = resources.displayMetrics.scaledDensity
         private val ivory = Color.rgb(250, 248, 243)
         private val white = Color.WHITE
@@ -1063,43 +1061,6 @@ class MainActivity : Activity() {
             glassEdgePaint.alpha = 108
             canvas.drawLine(left + 1.5f * density, top + 32f * density, left + 1.5f * density, bottom - 38f * density, glassEdgePaint)
             canvas.drawLine(right - 1.5f * density, top + 32f * density, right - 1.5f * density, bottom - 38f * density, glassEdgePaint)
-        }
-
-        private fun drawWaterLife(canvas:Canvas) {
-            if (raftAnimator?.isRunning != true || drawerProgress < 0.85f) return
-            val now = (SystemClock.uptimeMillis() - raftStartTime) / 1000f
-            val w = width.toFloat()
-            val h = height.toFloat()
-            canvas.save()
-            slosh.clipToWater(canvas, w, h)
-            for(i in 0 until 8) {
-                val seed=i*0.731f; val direction=if(i%2==0) 1f else -1f; val speed=10f+(i%4)*4f
-                val travel=now*speed*direction+seed*w*1.8f; val span=w+70f*density
-                val x=((travel%span)+span)%span-35f*density
-                val y=h*(1f-slosh.fill*(0.12f+(i%5)*0.16f))+sin(now*0.7f+seed*8f)*9f*density
-                val size=(10f+(i%3)*2.5f)*density; val wag=sin(now*5f+seed*11f)*size*0.22f
-                val saved=canvas.save(); canvas.translate(x,y); canvas.scale(direction,1f)
-                val body=Path().apply { moveTo(-size*0.48f,0f); cubicTo(-size*0.22f,-size*0.42f,size*0.34f,-size*0.35f,size*0.48f,0f); cubicTo(size*0.30f,size*0.34f,-size*0.22f,size*0.40f,-size*0.48f,0f); close() }
-                lifePaint.style=Paint.Style.FILL; lifePaint.color=fishColors[i%fishColors.size]; lifePaint.alpha=if(i<3) 175 else 220; canvas.drawPath(body,lifePaint)
-                val dorsal=Path().apply { moveTo(-size*0.18f,-size*0.22f); cubicTo(0f,-size*0.48f,size*0.28f,-size*0.42f,size*0.37f,-size*0.16f); close() }
-                canvas.drawPath(dorsal,lifePaint)
-                val ventral=Path().apply { moveTo(-size*0.05f,size*0.22f); lineTo(size*0.22f,size*0.34f+wag*0.12f); lineTo(size*0.27f,size*0.18f); close() }
-                canvas.drawPath(ventral,lifePaint)
-                val tail=Path().apply { moveTo(-size*0.40f,0f); cubicTo(-size*0.56f,-size*0.12f,-size*0.70f,-size*0.34f+wag,-size*0.88f,-size*0.30f+wag); cubicTo(-size*0.78f,wag*0.2f,-size*0.72f,size*0.30f+wag,-size*0.88f,size*0.32f+wag); cubicTo(-size*0.62f,size*0.25f,-size*0.50f,size*0.10f,-size*0.40f,0f); close() }
-                canvas.drawPath(tail,lifePaint)
-                weatherDetailPaint.color=Color.argb(100,18,43,54)
-                val pectoral=Path().apply { moveTo(size*0.02f,size*0.03f); lineTo(size*0.22f,size*0.27f+wag*0.1f); lineTo(size*0.30f,size*0.02f); close() }
-                canvas.drawPath(pectoral,weatherDetailPaint)
-                weatherDetailPaint.style=Paint.Style.STROKE; weatherDetailPaint.strokeWidth=0.65f*density
-                weatherDetailPaint.color=Color.argb(105,255,255,255)
-                canvas.drawLine(-size*0.18f,0f,size*0.28f,0f,weatherDetailPaint)
-                canvas.drawArc(size*0.12f,-size*0.18f,size*0.35f,size*0.18f,80f,190f,false,weatherDetailPaint)
-                weatherDetailPaint.style=Paint.Style.FILL
-                lifePaint.color=Color.WHITE; lifePaint.alpha=235; canvas.drawCircle(size*0.27f,-size*0.09f,size*0.055f,lifePaint)
-                lifePaint.color=Color.rgb(28,55,65); canvas.drawCircle(size*0.29f,-size*0.09f,size*0.027f,lifePaint); canvas.restoreToCount(saved)
-            }
-            canvas.restore()
-            lifePaint.alpha = 255
         }
 
         private fun drawApps(canvas: Canvas) {
