@@ -136,6 +136,20 @@ class WaterSurfaceSimulation2D(
         }
     }
 
+    /** Injects a localized ripple from a finger drag across the drawer reveal. */
+    fun disturbSurface(position: Float, impulse: Float) {
+        if (!position.isFinite() || !impulse.isFinite()) return
+        val center = (position.coerceIn(-1f, 1f) + 1f) * 0.5f
+        val strength = impulse.coerceIn(-2f, 2f)
+        for (i in 1 until waveCount - 1) {
+            val sample = i / (waveCount - 1f)
+            val distance = sample - center
+            val falloff = 1f / (1f + distance * distance * 90f)
+            waveVelocity[i] = (waveVelocity[i] + strength * falloff * 0.035f)
+                .coerceIn(-0.8f, 0.8f)
+        }
+    }
+
     /** Interpolated physical wave height at a position from -1 (left) to +1 (right). */
     fun waveHeightAt(position: Float): Float {
         if (!position.isFinite()) return 0f
