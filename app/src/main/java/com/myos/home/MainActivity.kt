@@ -70,22 +70,35 @@ private class SloshWater(private val density: Float) {
     private val matrix = Matrix()
     private val gradient = LinearGradient(
         0f, 0f, 0f, 1f,
-        Color.argb(92, 120, 235, 245),
-        Color.argb(158, 0, 170, 200),
+        Color.argb(112, 190, 250, 255),
+        Color.argb(178, 0, 145, 190),
         Shader.TileMode.CLAMP
     )
     private val body = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = gradient }
+    private val depth = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val caustic = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val glint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = Color.WHITE
+    }
+    private val causticPath = Path()
     private val soft = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         color = Color.WHITE
-        strokeWidth = 6f * density
-        alpha = 70
+        strokeWidth = 8f * density
+        alpha = 85
     }
     private val foam = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         color = Color.WHITE
-        strokeWidth = 2.5f * density
-        alpha = 190
+        strokeWidth = 2.8f * density
+        alpha = 220
     }
 
     val horizontalMotion: Float get() = kotlin.math.sin(theta).coerceIn(-1f, 1f)
@@ -187,12 +200,70 @@ private class SloshWater(private val density: Float) {
     fun draw(canvas: Canvas, w: Float, h: Float, alpha: Float) {
         if (alpha <= 0.01f || w <= 0f || h <= 0f) return
         buildPath(w, h)
+
+        // Layer 1: translucent body with a bright surface and deeper blue-green base.
         body.alpha = (alpha * 255f).toInt().coerceIn(0, 255)
         canvas.drawPath(path, body)
-        soft.alpha = (70f * alpha).toInt().coerceIn(0, 70)
-        foam.alpha = (190f * alpha).toInt().coerceIn(0, 190)
+
+        // Layer 2: darkened side walls create the illusion of thickness and rounded volume.
+        depth.shader = LinearGradient(
+            0f, 0f, w, 0f,
+            intArrayOf(
+                Color.argb(112, 0, 35, 67),
+                Color.argb(0, 0, 35, 67),
+                Color.argb(0, 0, 35, 67),
+                Color.argb(112, 0, 35, 67)
+            ),
+            floatArrayOf(0f, 0.24f, 0.76f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        depth.alpha = (alpha * 220f).toInt().coerceIn(0, 220)
+        canvas.drawPath(path, depth)
+        depth.shader = null
+
+        // Layer 3: refracted caustic ribbons inside the liquid, moving at different depths.
+        canvas.save()
+        canvas.clipPath(path)
+        for (i in 0 until 11) {
+            val depthFactor = 0.16f + (i % 6) * 0.135f
+            val y = h * (1f - fill * depthFactor)
+            val x = ((i * 0.173f + phase * (0.025f + (i % 3) * 0.009f)) % 1.2f - 0.1f) * w
+            val length = w * (0.10f + (i % 4) * 0.035f)
+            val sway = sin(phase * 0.65f + i * 1.7f) * 10f * density
+            causticPath.rewind()
+            causticPath.moveTo(x, y + sway)
+            causticPath.cubicTo(
+                x + length * 0.28f, y - 8f * density + sway,
+                x + length * 0.68f, y + 9f * density + sway,
+                x + length, y + sway * 0.45f
+            )
+            caustic.color = if (i % 3 == 0) Color.rgb(202, 255, 250) else Color.rgb(105, 229, 238)
+            caustic.strokeWidth = (1f + (i % 3) * 0.55f) * density
+            caustic.alpha = (alpha * (24f + (i % 4) * 12f)).toInt().coerceIn(0, 72)
+            canvas.drawPath(causticPath, caustic)
+        }
+
+        // Soft shafts and scattered specular glints make the water read as a 3D medium.
+        for (i in 0 until 7) {
+            val x = w * (0.10f + i * 0.135f) + sin(phase * 0.4f + i) * 7f * density
+            val y = h * (1f - fill * (0.22f + (i % 4) * 0.16f))
+            glint.strokeWidth = (1.1f + (i % 2) * 0.8f) * density
+            glint.alpha = (alpha * (32f + (i % 3) * 18f)).toInt().coerceIn(0, 86)
+            canvas.drawLine(x, y, x + (12f + (i % 3) * 5f) * density, y - 2f * density, glint)
+        }
+        canvas.restore()
+
+        // Layer 4: bright Fresnel-like rim and a broad, soft reflection on the free surface.
+        soft.alpha = (85f * alpha).toInt().coerceIn(0, 85)
+        foam.alpha = (220f * alpha).toInt().coerceIn(0, 220)
         canvas.drawPath(edge, soft)
         canvas.drawPath(edge, foam)
+        glint.strokeWidth = 1.2f * density
+        glint.alpha = (alpha * 115f).toInt().coerceIn(0, 115)
+        causticPath.rewind()
+        causticPath.moveTo(w * 0.22f, h * 0.30f)
+        causticPath.quadTo(w * 0.50f, h * 0.27f + sin(phase) * 3f * density, w * 0.78f, h * 0.30f)
+        canvas.drawPath(causticPath, glint)
     }
 }
 
