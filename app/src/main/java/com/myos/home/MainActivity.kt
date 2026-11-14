@@ -535,7 +535,7 @@ private class WaterGlRenderer : GLSurfaceView.Renderer {
             out vec4 fragColor;
             void main() {
                 vec2 gravity = vec2(sin(uAngle), -cos(uAngle));
-                float signedDepth = dot(vPosition, gravity) + 0.10 + vWave;
+                float signedDepth = dot(vPosition, gravity) - 0.10 + vWave;
                 if (signedDepth < 0.0) discard;
 
                 float depth = clamp(signedDepth / 1.25, 0.0, 1.0);
