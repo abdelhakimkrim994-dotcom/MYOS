@@ -478,6 +478,9 @@ class MainActivity : Activity() {
         }
         private val wave = WaveShape()
         private val slosh = SloshWater(density)
+        private val drawerRevealPath = Path()
+        private var swipeWavePhase = 0f
+        private var swipeWaveEnergy = 0f
         private var homeWaterline = 0f
         private var fadeShader: LinearGradient? = null
         private var tintShader: LinearGradient? = null
@@ -1157,6 +1160,22 @@ class MainActivity : Activity() {
             iconShadowPaint.alpha = 26
         }
 
+        private fun buildDrawerRevealPath(w: Float, h: Float, baseY: Float) {
+            val amplitude = (2.2f + swipeWaveEnergy * 13f) * density
+            val segments = 36
+            drawerRevealPath.rewind()
+            for (i in 0..segments) {
+                val t = i / segments.toFloat()
+                val x = t * w
+                val envelope = 0.35f + 0.65f * sin(PI.toFloat() * t)
+                val y = baseY + sin(t * PI.toFloat() * 3.2f + swipeWavePhase) * amplitude * envelope
+                if (i == 0) drawerRevealPath.moveTo(x, y) else drawerRevealPath.lineTo(x, y)
+            }
+            drawerRevealPath.lineTo(w, h)
+            drawerRevealPath.lineTo(0f, h)
+            drawerRevealPath.close()
+            swipeWaveEnergy *= 0.94f
+        }
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             if (drawerProgress <= 0f) {
@@ -1167,13 +1186,14 @@ class MainActivity : Activity() {
             val w = width.toFloat()
             val waterY = h - drawerProgress * h * 1.08f
             if (drawerProgress < 1f) drawHome(canvas)
-            // The drawer backdrop is a fixed scene. Only the liquid and fish respond to gravity.
+            // Reveal the drawer with a soft, swipe-driven wave edge instead of a flat crop.
             canvas.save()
-            canvas.clipRect(0f, waterY.coerceAtLeast(0f), w, h)
+            buildDrawerRevealPath(w, h, waterY.coerceAtLeast(0f))
+            canvas.clipPath(drawerRevealPath)
             drawDrawerBackdrop(canvas)
             canvas.restore()
             drawWater(canvas)
-            drawWaterLife(canvas)
+            // The launcher test scene intentionally contains no fish or bubble overlays.
             drawApps(canvas)
         }
 
@@ -1201,6 +1221,9 @@ class MainActivity : Activity() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     velocityTracker?.addMovement(event)
+                    val dragDelta = event.y - lastY
+                    swipeWavePhase += dragDelta / (24f * density)
+                    swipeWaveEnergy = (swipeWaveEnergy + abs(dragDelta) / (18f * density)).coerceIn(0f, 1f)
                     val dy = event.y - downY
                     when (gestureMode) {
                         GestureMode.OPENING -> {
