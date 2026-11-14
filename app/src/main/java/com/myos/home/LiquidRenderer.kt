@@ -298,11 +298,13 @@ internal class LiquidRenderer(private val onDiagnostics: (String) -> Unit) : GLS
             }
             bool traceWater(vec3 ro, vec3 rd, vec3 up, out vec3 hit, out float travel) {
                 travel = 0.0;
-                for (int i = 0; i < 88; i++) {
+                // Balanced mobile quality: fewer SDF evaluations per pixel,
+                // with a slightly larger conservative step to retain stable hits.
+                for (int i = 0; i < 64; i++) {
                     vec3 p = ro + rd * travel;
                     float d = waterDistance(p, up);
                     if (d < 0.0018) { hit = p; return true; }
-                    travel += max(d * 0.72, 0.0015);
+                    travel += max(d * 0.78, 0.0015);
                     if (travel > 7.0) break;
                 }
                 hit = vec3(0.0);
