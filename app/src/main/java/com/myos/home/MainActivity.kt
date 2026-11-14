@@ -214,7 +214,8 @@ private class SloshWater(private val density: Float) {
 
         // 2. Depth absorption. This gradient is clipped to the actual sloshing volume,
         //    so the bottom gets darker while the moving surface remains luminous.
-        depthGradient.setLocalMatrix(Matrix().apply { setScale(1f, h) })
+        depthMatrix.setScale(1f, h)
+        depthGradient.setLocalMatrix(depthMatrix)
         depth.shader = depthGradient
         depth.alpha = (alpha * 235f).toInt().coerceIn(0, 235)
         canvas.drawPath(path, depth)
