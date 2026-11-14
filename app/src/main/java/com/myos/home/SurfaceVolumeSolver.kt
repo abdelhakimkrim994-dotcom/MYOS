@@ -47,7 +47,7 @@ internal class SurfaceVolumeSolver(
         samples = points.toFloatArray()
     }
 
-    fun offsetForHalfFill(nx: Float, ny: Float, nz: Float): Float {
+    fun offsetForFill(nx: Float, ny: Float, nz: Float): Float {
         // A malformed normal must never poison the shader uniform.
         if (samples.size < 3 || !nx.isFinite() || !ny.isFinite() || !nz.isFinite()) return 0f
         val lengthSquared = nx * nx + ny * ny + nz * nz
