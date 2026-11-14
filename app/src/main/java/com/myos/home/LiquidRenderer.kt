@@ -222,42 +222,6 @@ internal class LiquidRenderer(private val onDiagnostics: (String) -> Unit) : GLS
                            mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
                                mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
             }
-            float causticPattern(vec2 p) {
-                vec2 q = p * vec2(8.5, 10.5);
-                q += vec2(sin(p.y * 5.0 + uTime * 0.55),
-                          cos(p.x * 4.0 - uTime * 0.48)) * 0.24;
-                float a = sin(q.x * 1.65 + sin(q.y * 1.25 + uTime * 0.82));
-                float b = sin(q.y * 1.85 - sin(q.x * 1.35 - uTime * 0.68));
-                return pow(clamp(1.0 - abs(a * b), 0.0, 1.0), 8.0);
-            }
-            float triCaustics(vec3 p, vec3 n) {
-                vec3 w = pow(abs(n), vec3(4.0));
-                w /= max(w.x + w.y + w.z, 0.0001);
-                return causticPattern(p.zy) * w.x
-                     + causticPattern(p.xz) * w.y
-                     + causticPattern(p.xy) * w.z;
-            }
-            float bubbles(vec2 p, float t) {
-                float acc = 0.0;
-                for (int i = 0; i < 3; i++) {
-                    float fi = float(i);
-                    vec2 q = p * (5.0 + fi * 4.0);
-                    q.y -= t * (0.30 + 0.14 * fi);
-                    vec2 id = floor(q);
-                    vec2 f = fract(q) - 0.5;
-                    float h = hash(vec3(id, fi));
-                    if (h > 0.45) {
-                        vec2 off = (vec2(h, fract(h * 7.13)) - 0.5) * 0.4;
-                        float r = 0.10 + 0.08 * fract(h * 3.7);
-                        float d = length(f - off);
-                        float ring = 1.0 - smoothstep(r - 0.025, r, d);
-                        float glimmer = 1.0 - smoothstep(0.0, 0.03,
-                            length(f - off - vec2(-r * 0.35, r * 0.35)));
-                        acc += ring + glimmer * 0.8;
-                    }
-                }
-                return clamp(acc, 0.0, 1.0);
-            }
             float sdRoundBox(vec3 p, vec3 b, float r) {
                 vec3 q = abs(p) - b + r;
                 return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
