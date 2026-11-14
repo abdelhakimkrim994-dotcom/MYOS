@@ -65,6 +65,13 @@ private class SloshWater(private val density: Float) {
     private var surfaceY = 0f
     private var surfaceTx = 1f
     private var surfaceTy = 0f
+    var gravityX: Float = 0f
+        private set
+    var gravityY: Float = 1f
+        private set
+    var surfaceDistance: Float = 0f
+        private set
+    val angle: Float get() = theta
     private val path = Path()
     private val edge = Path()
     private val px = FloatArray(8)
@@ -167,6 +174,9 @@ private class SloshWater(private val density: Float) {
             if (area(mid, w, h, gx, gy) > targetArea) low = mid else high = mid
         }
         val d = (low + high) * 0.5f
+        gravityX = gx
+        gravityY = gy
+        surfaceDistance = d
         val sx = w * 0.5f + gx * d
         val sy = h * 0.5f + gy * d
         val tx = gy
@@ -285,6 +295,174 @@ private class SloshWater(private val density: Float) {
             surfaceY + surfaceTy * rimHalf
         )
         canvas.drawPath(causticPath, glint)
+    }
+}
+
+
+/**
+ * Small ocean objects carried by the liquid. Pearls are heavy and settle low;
+ * shells and starfish are buoyant and gather near the free surface.
+ */
+private class FloatingThings(private val density: Float, width: Float, height: Float) {
+    private data class Thing(
+        var x: Float, var y: Float, val radius: Float, val buoyancy: Float,
+        val kind: Int, val color: Int,
+        var vx: Float = 0f, var vy: Float = 0f, var rotation: Float = 0f
+    )
+    private val random = java.util.Random(19L)
+    private val things = ArrayList<Thing>()
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val highlight = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+
+    init {
+        val colors = intArrayOf(
+            Color.rgb(244, 177, 104), Color.rgb(255, 205, 128),
+            Color.rgb(240, 125, 112), Color.rgb(245, 220, 164)
+        )
+        // Pearls: heavier objects that drift and collect toward the low side.
+        repeat(7) { i ->
+            val r = (5.5f + random.nextFloat() * 3.5f) * density
+            things += Thing(
+                width * (0.12f + random.nextFloat() * 0.76f),
+                height * (0.59f + random.nextFloat() * 0.32f),
+                r, 0.10f, 0, Color.rgb(226, 239, 236)
+            )
+        }
+        // Shells and starfish: buoyant objects that ride the moving surface.
+        repeat(4) { i ->
+            val r = (10f + random.nextFloat() * 3f) * density
+            things += Thing(
+                width * (0.12f + random.nextFloat() * 0.76f),
+                height * (0.50f + random.nextFloat() * 0.12f),
+                r, 1.0f, 1 + (i % 2), colors[i % colors.size],
+                rotation = random.nextFloat() * 0.7f - 0.35f
+            )
+        }
+        highlight.color = Color.WHITE
+        highlight.style = Paint.Style.STROKE
+        highlight.strokeCap = Paint.Cap.ROUND
+    }
+
+    fun shake(strength: Float) {
+        for (t in things) {
+            t.vx += (random.nextFloat() - 0.5f) * 520f * density * strength
+            t.vy += (random.nextFloat() - 0.5f) * 520f * density * strength
+        }
+    }
+
+    fun step(dtInput: Float, w: Float, h: Float, gx: Float, gy: Float, surfaceD: Float, theta: Float) {
+        val dt = dtInput.coerceIn(0.001f, 0.033f)
+        val gravity = 980f * density
+        for (t in things) {
+            val signedDepth = (t.x - w * 0.5f) * gx + (t.y - h * 0.5f) * gy - surfaceD
+            if (t.buoyancy > 0.5f) {
+                // A damped buoyancy spring keeps the shell/starfish partly submerged.
+                val desiredDepth = t.radius * 0.72f
+                val error = signedDepth - desiredDepth
+                val acceleration = (-error * 15f - (t.vx * gx + t.vy * gy) * 5.2f)
+                t.vx += gx * acceleration * dt
+                t.vy += gy * acceleration * dt
+                val tangentSpeed = t.vx * gy - t.vy * gx
+                t.vx += gy * (-tangentSpeed * 1.0f) * dt
+                t.vy += -gx * (-tangentSpeed * 1.0f) * dt
+            } else {
+                // Pearls retain weight and slowly slide down the gravity vector.
+                t.vx += gx * gravity * dt
+                t.vy += gy * gravity * dt
+                val drag = kotlin.math.exp(-1.8f * dt)
+                t.vx *= drag
+                t.vy *= drag
+            }
+            t.x += t.vx * dt
+            t.y += t.vy * dt
+            val pad = t.radius
+            if (t.x < pad) { t.x = pad; t.vx = abs(t.vx) * 0.28f }
+            if (t.x > w - pad) { t.x = w - pad; t.vx = -abs(t.vx) * 0.28f }
+            if (t.y < pad) { t.y = pad; t.vy = abs(t.vy) * 0.25f }
+            if (t.y > h - pad) { t.y = h - pad; t.vy = -abs(t.vy) * 0.24f }
+            t.rotation += if (t.buoyancy > 0.5f) {
+                (theta - t.rotation) * min(1f, 3.5f * dt)
+            } else {
+                ((t.vx * gy - t.vy * gx) / max(t.radius, 1f)) * dt * 0.25f
+            }
+        }
+        // Gentle non-overlap keeps the decorative objects from occupying the same spot.
+        for (i in things.indices) for (j in i + 1 until things.size) {
+            val a = things[i]; val b = things[j]
+            val dx = b.x - a.x; val dy = b.y - a.y
+            val minDistance = (a.radius + b.radius) * 0.82f
+            val distance2 = dx * dx + dy * dy
+            if (distance2 < minDistance * minDistance && distance2 > 0.01f) {
+                val distance = kotlin.math.sqrt(distance2)
+                val push = (minDistance - distance) * 0.5f / distance
+                a.x -= dx * push; a.y -= dy * push
+                b.x += dx * push; b.y += dy * push
+            }
+        }
+    }
+
+    fun draw(canvas: Canvas, alpha: Float) {
+        if (alpha <= 0.01f) return
+        val baseAlpha = (alpha * 255f).toInt().coerceIn(0, 255)
+        for (t in things) {
+            canvas.save()
+            canvas.translate(t.x, t.y)
+            canvas.rotate(Math.toDegrees(t.rotation.toDouble()).toFloat())
+            when (t.kind) {
+                0 -> {
+                    // Pearl: softly shaded sphere with a tiny specular highlight.
+                    paint.shader = LinearGradient(
+                        -t.radius, -t.radius, t.radius, t.radius,
+                        intArrayOf(Color.rgb(255,255,250), Color.rgb(178,218,222), Color.rgb(245,250,239)),
+                        null, Shader.TileMode.CLAMP
+                    )
+                    paint.alpha = baseAlpha
+                    canvas.drawCircle(0f, 0f, t.radius, paint)
+                    paint.shader = null
+                    highlight.strokeWidth = 1.2f * density
+                    highlight.alpha = (baseAlpha * 0.78f).toInt()
+                    canvas.drawArc(-t.radius * 0.58f, -t.radius * 0.62f, t.radius * 0.18f, t.radius * 0.16f, 205f, 95f, false, highlight)
+                }
+                1 -> {
+                    // Scallop shell with ribbed fan and a shaded lower lip.
+                    paint.shader = null
+                    paint.color = t.color; paint.alpha = baseAlpha
+                    path.rewind()
+                    path.moveTo(-t.radius, t.radius * 0.45f)
+                    path.quadTo(-t.radius * 1.12f, -t.radius * 0.82f, 0f, -t.radius)
+                    path.quadTo(t.radius * 1.12f, -t.radius * 0.82f, t.radius, t.radius * 0.45f)
+                    path.quadTo(0f, t.radius * 1.05f, -t.radius, t.radius * 0.45f)
+                    path.close()
+                    canvas.drawPath(path, paint)
+                    highlight.strokeWidth = 1f * density
+                    highlight.alpha = (baseAlpha * 0.62f).toInt()
+                    for (rib in -2..2) {
+                        canvas.drawLine(0f, -t.radius * 0.78f, rib * t.radius * 0.31f, t.radius * 0.55f, highlight)
+                    }
+                    paint.color = Color.rgb(255, 231, 194); paint.alpha = baseAlpha
+                    canvas.drawOval(-t.radius * 0.62f, t.radius * 0.34f, t.radius * 0.62f, t.radius * 0.62f, paint)
+                }
+                else -> {
+                    // Rounded five-armed starfish.
+                    paint.shader = null
+                    paint.color = t.color; paint.alpha = baseAlpha
+                    path.rewind()
+                    for (i in 0 until 10) {
+                        val angle = -Math.PI / 2.0 + i * Math.PI / 5.0
+                        val radius = t.radius * if (i % 2 == 0) 1f else 0.48f
+                        val x = kotlin.math.cos(angle).toFloat() * radius
+                        val y = kotlin.math.sin(angle).toFloat() * radius
+                        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                    }
+                    path.close()
+                    canvas.drawPath(path, paint)
+                    paint.color = Color.argb(95, 255, 245, 210); paint.alpha = baseAlpha
+                    canvas.drawCircle(-t.radius * 0.18f, -t.radius * 0.12f, t.radius * 0.16f, paint)
+                }
+            }
+            canvas.restore()
+        }
     }
 }
 
@@ -474,6 +652,7 @@ class MainActivity : Activity() {
         }
         private val wave = WaveShape()
         private val slosh = SloshWater(density)
+        private var floatingThings: FloatingThings? = null
         private var homeWaterline = 0f
         private var fadeShader: LinearGradient? = null
         private var tintShader: LinearGradient? = null
@@ -559,6 +738,8 @@ class MainActivity : Activity() {
             val dt=((now-lastPhysicsFrame)/1000f).coerceIn(0.001f,0.04f)
             lastPhysicsFrame=now
             slosh.step(dt)
+            floatingThings?.step(dt.coerceAtMost(0.033f), width.toFloat(), height.toFloat(),
+                slosh.gravityX, slosh.gravityY, slosh.surfaceDistance, slosh.angle)
             motionX = slosh.horizontalMotion
             motionY = slosh.verticalMotion
             val stiffness=18f
@@ -578,6 +759,7 @@ class MainActivity : Activity() {
                 shakeKickAt=now
                 shakeStrength=(magnitude/15f).coerceIn(0.7f,1.7f)
                 slosh.kick(shakeStrength)
+                floatingThings?.shake(shakeStrength)
                 // A shake injects momentum into the liquid; the spring and damping do the rest.
                 motionVelocityX=(motionVelocityX+x*0.045f).coerceIn(-3.2f,3.2f)
                 motionVelocityY=(motionVelocityY+y*0.045f-z*0.018f).coerceIn(-3.2f,3.2f)
@@ -751,6 +933,7 @@ class MainActivity : Activity() {
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             super.onSizeChanged(w, h, oldw, oldh)
             homeWaterline = h * 0.58f
+            floatingThings = FloatingThings(density, w.toFloat(), h.toFloat())
             val fadeBottom = homeWaterline + 48f * density
             fadeShader = LinearGradient(
                 0f, homeWaterline, 0f, fadeBottom,
@@ -1214,6 +1397,10 @@ class MainActivity : Activity() {
             drawWater(canvas)
             drawMotionDebug(canvas)
             drawWaterLife(canvas)
+            canvas.save()
+            slosh.clipToWater(canvas, w, h)
+            floatingThings?.draw(canvas, drawerProgress)
+            canvas.restore()
             drawApps(canvas)
             drawGlassDepthFrame(canvas)
         }
