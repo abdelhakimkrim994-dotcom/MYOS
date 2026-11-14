@@ -30,6 +30,16 @@ import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PixelFormat
+import android.opengl.GLES30
+import android.opengl.GLSurfaceView
+import android.widget.FrameLayout
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.FloatBuffer
+import java.nio.ShortBuffer
+import javax.microedition.khronos.egl.EGLConfig
+import javax.microedition.khronos.opengles.GL10
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -466,8 +476,184 @@ private class FloatingThings(private val density: Float, width: Float, height: F
     }
 }
 
+
+/**
+ * GPU-rendered liquid layer. A tessellated mesh is shaded with depth,
+ * Fresnel highlights, moving caustics and gravity-driven surface waves.
+ */
+private class WaterGlRenderer : GLSurfaceView.Renderer {
+    @Volatile private var drawer = 0f
+    @Volatile private var angle = 0f
+    @Volatile private var shake = 0f
+    private var program = 0
+    private var vertexBuffer: FloatBuffer? = null
+    private var indexBuffer: ShortBuffer? = null
+    private var indexCount = 0
+    private var positionHandle = 0
+    private var angleHandle = 0
+    private var drawerHandle = 0
+    private var timeHandle = 0
+    private var shakeHandle = 0
+    private val started = SystemClock.elapsedRealtime()
+
+    fun update(progress: Float, surfaceAngle: Float, shakeAmount: Float) {
+        drawer = progress.coerceIn(0f, 1f)
+        angle = surfaceAngle
+        shake = shakeAmount.coerceIn(0f, 2f)
+    }
+
+    override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        GLES30.glClearColor(0f, 0f, 0f, 0f)
+        GLES30.glEnable(GLES30.GL_BLEND)
+        GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+        val vertex = """
+            #version 300 es
+            layout(location=0) in vec2 aPosition;
+            uniform float uAngle;
+            uniform float uTime;
+            uniform float uShake;
+            out vec2 vPosition;
+            out float vWave;
+            void main() {
+                vPosition = aPosition;
+                float wave = sin(aPosition.x * 13.0 + uTime * 1.7) * 0.006;
+                wave += sin(aPosition.x * 27.0 - uTime * 1.15) * 0.003;
+                wave *= (0.35 + uShake);
+                vWave = wave;
+                gl_Position = vec4(aPosition.x, aPosition.y + wave, 0.0, 1.0);
+            }
+        """.trimIndent()
+        val fragment = """
+            #version 300 es
+            precision highp float;
+            in vec2 vPosition;
+            in float vWave;
+            uniform float uAngle;
+            uniform float uDrawer;
+            uniform float uTime;
+            uniform float uShake;
+            out vec4 fragColor;
+            void main() {
+                vec2 gravity = vec2(sin(uAngle), -cos(uAngle));
+                float signedDepth = dot(vPosition, gravity) + 0.10 + vWave;
+                if (signedDepth < 0.0) discard;
+
+                float depth = clamp(signedDepth / 1.25, 0.0, 1.0);
+                float edge = smoothstep(0.0, 0.035, signedDepth);
+                float sideShade = smoothstep(0.72, 1.0, abs(vPosition.x));
+                float causticA = sin(vPosition.x * 19.0 + vPosition.y * 13.0 + uTime * 1.4);
+                float causticB = sin(vPosition.x * 31.0 - vPosition.y * 17.0 - uTime * 1.1);
+                float caustics = pow(max(0.0, causticA * causticB), 5.0);
+                float shimmer = 0.5 + 0.5 * sin(vPosition.x * 8.0 + uTime * 1.8);
+                vec3 shallow = vec3(0.28, 0.88, 0.91);
+                vec3 deep = vec3(0.005, 0.29, 0.43);
+                vec3 color = mix(shallow, deep, smoothstep(0.0, 0.9, depth));
+                color *= 1.0 - sideShade * 0.24;
+                color += vec3(0.28, 0.75, 0.78) * caustics * 0.30;
+                float crest = exp(-abs(signedDepth) * 95.0);
+                color += vec3(0.58, 0.94, 0.97) * crest * (0.32 + shimmer * 0.18);
+                float alpha = (0.34 + depth * 0.34 + caustics * 0.08) * edge * uDrawer;
+                fragColor = vec4(color, alpha);
+            }
+        """.trimIndent()
+        program = linkProgram(compileShader(GLES30.GL_VERTEX_SHADER, vertex),
+                              compileShader(GLES30.GL_FRAGMENT_SHADER, fragment))
+        positionHandle = 0
+        angleHandle = GLES30.glGetUniformLocation(program, "uAngle")
+        drawerHandle = GLES30.glGetUniformLocation(program, "uDrawer")
+        timeHandle = GLES30.glGetUniformLocation(program, "uTime")
+        shakeHandle = GLES30.glGetUniformLocation(program, "uShake")
+        buildMesh()
+    }
+
+    private fun compileShader(type: Int, source: String): Int {
+        val shader = GLES30.glCreateShader(type)
+        GLES30.glShaderSource(shader, source)
+        GLES30.glCompileShader(shader)
+        val status = IntArray(1)
+        GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, status, 0)
+        if (status[0] == 0) {
+            val log = GLES30.glGetShaderInfoLog(shader)
+            GLES30.glDeleteShader(shader)
+            throw RuntimeException("Water shader compile failed: $log")
+        }
+        return shader
+    }
+
+    private fun linkProgram(vertex: Int, fragment: Int): Int {
+        val p = GLES30.glCreateProgram()
+        GLES30.glAttachShader(p, vertex)
+        GLES30.glAttachShader(p, fragment)
+        GLES30.glLinkProgram(p)
+        val status = IntArray(1)
+        GLES30.glGetProgramiv(p, GLES30.GL_LINK_STATUS, status, 0)
+        if (status[0] == 0) throw RuntimeException("Water shader link failed: " + GLES30.glGetProgramInfoLog(p))
+        GLES30.glDeleteShader(vertex)
+        GLES30.glDeleteShader(fragment)
+        return p
+    }
+
+    private fun buildMesh() {
+        val columns = 72
+        val rows = 48
+        val vertices = FloatArray((columns + 1) * (rows + 1) * 2)
+        var v = 0
+        for (y in 0..rows) for (x in 0..columns) {
+            vertices[v++] = -1f + 2f * x / columns
+            vertices[v++] = -1f + 2f * y / rows
+        }
+        val indices = ShortArray(rows * columns * 6)
+        var k = 0
+        for (y in 0 until rows) for (x in 0 until columns) {
+            val a = y * (columns + 1) + x
+            val b = a + columns + 1
+            indices[k++] = a.toShort(); indices[k++] = b.toShort(); indices[k++] = (a + 1).toShort()
+            indices[k++] = (a + 1).toShort(); indices[k++] = b.toShort(); indices[k++] = (b + 1).toShort()
+        }
+        vertexBuffer = ByteBuffer.allocateDirect(vertices.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply { put(vertices); position(0) }
+        indexBuffer = ByteBuffer.allocateDirect(indices.size * 2).order(ByteOrder.nativeOrder()).asShortBuffer().apply { put(indices); position(0) }
+        indexCount = indices.size
+    }
+
+    override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+        GLES30.glViewport(0, 0, width, height)
+    }
+
+    override fun onDrawFrame(gl: GL10?) {
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
+        if (drawer <= 0.001f || program == 0) return
+        GLES30.glUseProgram(program)
+        GLES30.glUniform1f(angleHandle, angle)
+        GLES30.glUniform1f(drawerHandle, drawer)
+        GLES30.glUniform1f(timeHandle, (SystemClock.elapsedRealtime() - started) / 1000f)
+        GLES30.glUniform1f(shakeHandle, shake)
+        GLES30.glEnableVertexAttribArray(positionHandle)
+        vertexBuffer?.position(0)
+        GLES30.glVertexAttribPointer(positionHandle, 2, GLES30.GL_FLOAT, false, 8, vertexBuffer)
+        indexBuffer?.position(0)
+        GLES30.glDrawElements(GLES30.GL_TRIANGLES, indexCount, GLES30.GL_UNSIGNED_SHORT, indexBuffer)
+        GLES30.glDisableVertexAttribArray(positionHandle)
+    }
+}
+
+private class WaterGlView(context: Context, val waterRenderer: WaterGlRenderer) : GLSurfaceView(context) {
+    init {
+        setEGLContextClientVersion(3)
+        setEGLConfigChooser(8, 8, 8, 8, 16, 0)
+        holder.setFormat(PixelFormat.TRANSLUCENT)
+        setZOrderMediaOverlay(true)
+        setRenderer(waterRenderer)
+        renderMode = RENDERMODE_WHEN_DIRTY
+        isClickable = false
+        isFocusable = false
+    }
+}
+
 class MainActivity : Activity() {
     private lateinit var launcherView: LauncherView
+    private lateinit var waterGlRenderer: WaterGlRenderer
+    private lateinit var waterGlView: WaterGlView
+    private lateinit var foregroundView: View
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -480,7 +666,25 @@ class MainActivity : Activity() {
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
         launcherView = LauncherView()
-        setContentView(launcherView)
+        waterGlRenderer = WaterGlRenderer()
+        waterGlView = WaterGlView(this, waterGlRenderer)
+        foregroundView = object : View(this) {
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                if (::launcherView.isInitialized) launcherView.drawForeground(canvas)
+            }
+        }.apply { isClickable = false; isFocusable = false }
+        val root = FrameLayout(this)
+        root.addView(launcherView, FrameLayout.LayoutParams(-1, -1))
+        root.addView(waterGlView, FrameLayout.LayoutParams(-1, -1))
+        root.addView(foregroundView, FrameLayout.LayoutParams(-1, -1))
+        setContentView(root)
+    }
+
+    override fun onPause() {
+        if (::launcherView.isInitialized) launcherView.stopMotionSensors()
+        if (::waterGlView.isInitialized) waterGlView.onPause()
+        super.onPause()
     }
 
     override fun onResume() {
@@ -490,11 +694,7 @@ class MainActivity : Activity() {
             launcherView.startMotionSensors()
             launcherView.startWeatherUpdates()
         }
-    }
-
-    override fun onPause() {
-        if (::launcherView.isInitialized) launcherView.stopMotionSensors()
-        super.onPause()
+        if (::waterGlView.isInitialized) waterGlView.onResume()
     }
 
     @Deprecated("Deprecated in Android API; retained for broad device compatibility")
@@ -1394,7 +1594,17 @@ class MainActivity : Activity() {
             canvas.clipRect(0f, waterY.coerceAtLeast(0f), w, h)
             drawDrawerBackdrop(canvas)
             canvas.restore()
-            drawWater(canvas)
+            // The GPU water layer and foreground Canvas layer are sibling views.
+            // This view owns only the stationary home/drawer backgrounds.
+            waterGlRenderer.update(drawerProgress, slosh.angle, shake)
+            waterGlView.requestRender()
+            foregroundView.invalidate()
+        }
+
+        fun drawForeground(canvas: Canvas) {
+            if (drawerProgress <= 0f) return
+            val w = width.toFloat()
+            val h = height.toFloat()
             drawMotionDebug(canvas)
             drawWaterLife(canvas)
             canvas.save()
