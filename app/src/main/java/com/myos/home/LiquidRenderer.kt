@@ -656,7 +656,7 @@ internal class LiquidRenderer(private val onDiagnostics: (String) -> Unit) : GLS
         GLES30.glUniform3f(upHandle, up[0], up[1], up[2])
         GLES30.glUniform2f(eyeHandle, eyeX, eyeY)
         GLES30.glUniform1f(shakeHandle, frameShake)
-        val rawSurfaceOffset = volumeSolver.offsetForHalfFill(up[0], up[1], up[2])
+        val rawSurfaceOffset = volumeSolver.offsetForFill(up[0], up[1], up[2])
         if (rawSurfaceOffset.isFinite()) {
             lastGoodSurfaceOffset = rawSurfaceOffset.coerceIn(-1.5f, 1.5f)
         }
