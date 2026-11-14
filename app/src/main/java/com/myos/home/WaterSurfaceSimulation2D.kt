@@ -102,6 +102,16 @@ class WaterSurfaceSimulation2D(
 
     private var targetAngle = 0f
     private var accumulator = 0f
+    private var previousAngularVelocity = 0f
+
+    // A compact 1D wave field along the free surface. Values are normalized
+    // to the viewport's short dimension; fixed endpoints keep the surface stable.
+    private val waveCount = 48
+    private val waveDisplacement = FloatArray(waveCount)
+    private val waveVelocity = FloatArray(waveCount)
+    private val nextWaveDisplacement = FloatArray(waveCount)
+    private val waveTension = 34f
+    private val waveDamping = 7.5f
 
     // Reused clipping buffers: solveSurface() may run every frame, so it must
     // not allocate polygon arrays inside its binary-search loop.
@@ -118,8 +128,22 @@ class WaterSurfaceSimulation2D(
     /** Adds a bounded impulse, for example from a detected phone shake or drawer gesture. */
     fun addImpulse(angularImpulse: Float) {
         if (!angularImpulse.isFinite()) return
-        angularVelocity = (angularVelocity + angularImpulse.coerceIn(-5f, 5f))
-            .coerceIn(-9f, 9f)
+        val impulse = angularImpulse.coerceIn(-5f, 5f)
+        angularVelocity = (angularVelocity + impulse).coerceIn(-9f, 9f)
+        for (i in 1 until waveCount - 1) {
+            val position = i / (waveCount - 1f) * 2f - 1f
+            waveVelocity[i] += impulse * position * 0.0025f
+        }
+    }
+
+    /** Interpolated physical wave height at a position from -1 (left) to +1 (right). */
+    fun waveHeightAt(position: Float): Float {
+        if (!position.isFinite()) return 0f
+        val sample = ((position.coerceIn(-1f, 1f) + 1f) * 0.5f) * (waveCount - 1)
+        val left = sample.toInt().coerceIn(0, waveCount - 1)
+        val right = (left + 1).coerceAtMost(waveCount - 1)
+        val fraction = sample - left
+        return waveDisplacement[left] * (1f - fraction) + waveDisplacement[right] * fraction
     }
 
     /**
@@ -141,11 +165,34 @@ class WaterSurfaceSimulation2D(
     }
 
     private fun integrate(dt: Float) {
+        val oldAngularVelocity = angularVelocity
         val delta = wrapAngle(targetAngle - angleRadians)
-        val acceleration = stiffness * delta - damping * angularVelocity
-        angularVelocity = (angularVelocity + acceleration * dt).coerceIn(-9f, 9f)
+        val angularAcceleration = stiffness * delta - damping * angularVelocity
+        angularVelocity = (angularVelocity + angularAcceleration * dt).coerceIn(-9f, 9f)
         angleRadians = wrapAngle(angleRadians + angularVelocity * dt)
         wavePhase = wrapAngle(wavePhase + dt * (1.6f + abs(angularVelocity)))
+
+        // Phone rotation accelerates the liquid surface; the resulting wave
+        // propagates through neighboring samples instead of being a decorative sine.
+        val angularJerk = ((angularVelocity - oldAngularVelocity) / dt)
+            .coerceIn(-45f, 45f)
+        for (i in 1 until waveCount - 1) {
+            val position = i / (waveCount - 1f) * 2f - 1f
+            val laplacian = waveDisplacement[i - 1] -
+                2f * waveDisplacement[i] + waveDisplacement[i + 1]
+            val acceleration = laplacian * waveTension -
+                waveVelocity[i] * waveDamping +
+                angularJerk * position * 0.00045f
+            waveVelocity[i] = (waveVelocity[i] + acceleration * dt).coerceIn(-0.8f, 0.8f)
+            nextWaveDisplacement[i] = (waveDisplacement[i] + waveVelocity[i] * dt)
+                .coerceIn(-0.035f, 0.035f)
+        }
+        nextWaveDisplacement[0] = 0f
+        nextWaveDisplacement[waveCount - 1] = 0f
+        for (i in 0 until waveCount) {
+            waveDisplacement[i] = nextWaveDisplacement[i]
+        }
+        previousAngularVelocity = angularVelocity
     }
 
     /**
