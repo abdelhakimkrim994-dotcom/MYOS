@@ -4,11 +4,8 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ResolveInfo
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
@@ -16,7 +13,6 @@ import android.os.Build
 import android.os.Bundle
 import android.view.MotionEvent
 import android.view.View
-import android.view.Window
 import android.view.WindowManager
 import kotlin.math.abs
 import kotlin.math.max
@@ -63,11 +59,9 @@ class MainActivity : Activity() {
         var isDrawerOpen = false
             private set
 
-        private val white = android.graphics.Color.rgb(250, 250, 248)
-        private val ocean = android.graphics.Color.rgb(18, 105, 145)
-        private val deepOcean = android.graphics.Color.rgb(8, 62, 91)
-        private val ink = android.graphics.Color.rgb(28, 43, 49)
-        private val muted = android.graphics.Color.rgb(105, 120, 125)
+        private val background = android.graphics.Color.rgb(248, 247, 243)
+        private val ink = android.graphics.Color.rgb(38, 43, 45)
+        private val muted = android.graphics.Color.rgb(112, 117, 116)
 
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val apps = mutableListOf<LaunchableApp>()
@@ -78,17 +72,9 @@ class MainActivity : Activity() {
         private var maxScroll = 0f
         private var downTime = 0L
         private val iconRects = mutableListOf<Pair<RectF, LaunchableApp>>()
-        private val wavePath = Path()
-        private val oceanPhoto: Bitmap? = loadOceanPhoto()
         private var drawerProgress = 0f
         private var drawerAnimator: ValueAnimator? = null
         private var isAnimatingDrawer = false
-
-        private fun loadOceanPhoto(): Bitmap? = try {
-            assets.open("myos_ocean.jpg").use { BitmapFactory.decodeStream(it) }
-        } catch (_: Exception) {
-            null
-        }
 
         init {
             isFocusable = true
@@ -163,114 +149,37 @@ class MainActivity : Activity() {
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            if (isDrawerOpen && !isAnimatingDrawer) {
-                drawDrawer(canvas)
-                return
-            }
-
             drawHome(canvas)
             if (drawerProgress > 0f) {
-                val w = width.toFloat()
-                val h = height.toFloat()
-                val crest = h * (1f - drawerProgress)
-                val amplitude = h * 0.035f * (1f - drawerProgress)
-                val waveEdge = Path().apply {
-                    moveTo(0f, crest + amplitude)
-                    cubicTo(w * 0.28f, crest - amplitude, w * 0.68f, crest + amplitude, w, crest - amplitude * 0.25f)
-                }
-                val reveal = Path(waveEdge).apply {
-                    lineTo(w, h)
-                    lineTo(0f, h)
-                    close()
-                }
+                val top = height * (1f - drawerProgress)
                 canvas.save()
-                canvas.clipPath(reveal)
+                canvas.clipRect(0f, top, width.toFloat(), height.toFloat())
                 drawDrawer(canvas)
                 canvas.restore()
-
-                // A restrained foam edge makes the reveal feel like one rising shoreline.
-                paint.style = Paint.Style.STROKE
-                paint.strokeWidth = 2.2f * resources.displayMetrics.density
-                paint.color = android.graphics.Color.argb(190, 255, 255, 255)
-                canvas.drawPath(waveEdge, paint)
-                paint.style = Paint.Style.FILL
             }
-        }
-
-        private fun drawOceanPhoto(canvas: Canvas): Boolean {
-            val photo = oceanPhoto ?: return false
-            val w = width.toFloat()
-            val h = height.toFloat()
-            // Use the identical crop on home and drawer so the ocean never jumps at the reveal.
-            val scale = max(w / photo.width, h / photo.height)
-            val drawW = photo.width * scale
-            val drawH = photo.height * scale
-            val left = (w - drawW) / 2f
-            val top = (h - drawH) / 2f
-            paint.alpha = 255
-            canvas.drawBitmap(photo, null, RectF(left, top, left + drawW, top + drawH), paint)
-            return true
         }
 
         private fun drawHome(canvas: Canvas) {
-            canvas.drawColor(white)
+            canvas.drawColor(background)
             val w = width.toFloat()
             val h = height.toFloat()
-
-            if (drawOceanPhoto(canvas)) {
-                // Keep the gesture hint subtle and readable over the turquoise water.
-                paint.color = android.graphics.Color.WHITE
-                paint.setShadowLayer(4f, 0f, 1f, android.graphics.Color.argb(110, 0, 45, 55))
-                paint.textAlign = Paint.Align.CENTER
-                paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-                paint.textSize = 14f * resources.displayMetrics.scaledDensity
-                canvas.drawText("Swipe up to open", w / 2f, h * 0.91f, paint)
-                paint.clearShadowLayer()
-                return
-            }
-
-            // Temporary vector fallback remains available until the photo asset is bundled.
-            val horizon = h * 0.53f
-            wavePath.reset()
-            wavePath.moveTo(0f, horizon + h * 0.025f)
-            wavePath.cubicTo(w * 0.25f, horizon - h * 0.055f, w * 0.53f, horizon + h * 0.09f, w, horizon - h * 0.015f)
-            wavePath.lineTo(w, h)
-            wavePath.lineTo(0f, h)
-            wavePath.close()
-
-            paint.color = ocean
-            canvas.drawPath(wavePath, paint)
-
-            paint.color = deepOcean
-            val lowerWave = Path().apply {
-                moveTo(0f, horizon + h * 0.12f)
-                cubicTo(w * 0.32f, horizon + h * 0.04f, w * 0.7f, horizon + h * 0.19f, w, horizon + h * 0.08f)
-                lineTo(w, h)
-                lineTo(0f, h)
-                close()
-            }
-            canvas.drawPath(lowerWave, paint)
-
-            paint.color = ink
+            paint.color = muted
             paint.textAlign = Paint.Align.CENTER
             paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            paint.textSize = 14f * resources.displayMetrics.scaledDensity
-            canvas.drawText("Swipe up to open", w / 2f, h * 0.91f, paint)
+            paint.textSize = 13f * resources.displayMetrics.scaledDensity
+            canvas.drawText("Swipe up to open", w / 2f, h * 0.92f, paint)
         }
 
         private fun drawDrawer(canvas: Canvas) {
             val w = width.toFloat()
             val h = height.toFloat()
-            if (!drawOceanPhoto(canvas)) canvas.drawColor(deepOcean)
-            // A light blue veil keeps app icons legible without introducing a separate panel.
-            paint.color = android.graphics.Color.argb(105, 3, 35, 55)
-            canvas.drawRect(0f, 0f, w, h, paint)
+            canvas.drawColor(background)
 
-            paint.color = android.graphics.Color.WHITE
+            paint.color = ink
             paint.textAlign = Paint.Align.CENTER
             paint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            paint.textSize = 20f * resources.displayMetrics.scaledDensity
-            canvas.drawText("Your apps", w / 2f, h * 0.105f, paint)
+            paint.textSize = 18f * resources.displayMetrics.scaledDensity
+            canvas.drawText("Apps", w / 2f, h * 0.105f, paint)
 
             iconRects.clear()
             val columns = 4
@@ -299,7 +208,7 @@ class MainActivity : Activity() {
                 app.icon.draw(canvas)
                 iconRects.add(Pair(RectF(rect.left - 12f, rect.top - 12f, rect.right + 12f, rect.bottom + 42f), app))
 
-                paint.color = android.graphics.Color.WHITE
+                paint.color = ink
                 paint.textAlign = Paint.Align.CENTER
                 paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
                 paint.textSize = 10f * resources.displayMetrics.scaledDensity
@@ -309,7 +218,7 @@ class MainActivity : Activity() {
             canvas.restore()
 
             if (apps.isEmpty()) {
-                paint.color = android.graphics.Color.WHITE
+                paint.color = muted
                 paint.textAlign = Paint.Align.CENTER
                 paint.textSize = 14f * resources.displayMetrics.scaledDensity
                 canvas.drawText("No launchable apps found", w / 2f, h * 0.5f, paint)
