@@ -2,7 +2,7 @@ name: MYOS Android build
 
 on:
   push:
-    branches: [main]
+    branches: [main, design/ocean-wave-drawer]
   workflow_dispatch:
 
 permissions:
@@ -56,6 +56,6 @@ jobs:
       - name: Upload signed release APK
         uses: actions/upload-artifact@v4
         with:
-          name: MYOS-Home-0.2.0
+          name: MYOS-Home-1.4.0
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
