@@ -6,7 +6,6 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -102,6 +101,13 @@ class WaterSurfaceSimulation2D(
     private var targetAngle = 0f
     private var accumulator = 0f
 
+    // Reused clipping buffers: solveSurface() may run every frame, so it must
+    // not allocate polygon arrays inside its binary-search loop.
+    private val clipInputX = FloatArray(4)
+    private val clipInputY = FloatArray(4)
+    private val clipOutputX = FloatArray(8)
+    private val clipOutputY = FloatArray(8)
+
     fun setGravity(ax: Float, ay: Float, az: Float) {
         gravityFrame = GravityFrame2D.fromAcceleration(ax, ay, az, gravityFrame)
         targetAngle = gravityFrame.angleRadians
@@ -186,29 +192,33 @@ class WaterSurfaceSimulation2D(
         offset: Float
     ): Float {
         // A half-plane clips a rectangle into a polygon with at most six vertices.
-        val inputX = floatArrayOf(0f, width, width, 0f)
-        val inputY = floatArrayOf(0f, 0f, height, height)
-        val outputX = FloatArray(8)
-        val outputY = FloatArray(8)
+        clipInputX[0] = 0f
+        clipInputX[1] = width
+        clipInputX[2] = width
+        clipInputX[3] = 0f
+        clipInputY[0] = 0f
+        clipInputY[1] = 0f
+        clipInputY[2] = height
+        clipInputY[3] = height
         var count = 0
 
         for (i in 0 until 4) {
             val j = (i + 1) % 4
-            val da = (inputX[i] - width * 0.5f) * nx +
-                (inputY[i] - height * 0.5f) * ny - offset
-            val db = (inputX[j] - width * 0.5f) * nx +
-                (inputY[j] - height * 0.5f) * ny - offset
+            val da = (clipInputX[i] - width * 0.5f) * nx +
+                (clipInputY[i] - height * 0.5f) * ny - offset
+            val db = (clipInputX[j] - width * 0.5f) * nx +
+                (clipInputY[j] - height * 0.5f) * ny - offset
 
             if (da <= 0f) {
-                outputX[count] = inputX[i]
-                outputY[count] = inputY[i]
+                clipOutputX[count] = clipInputX[i]
+                clipOutputY[count] = clipInputY[i]
                 count++
             }
 
             if ((da < 0f && db > 0f) || (da > 0f && db < 0f)) {
                 val t = da / (da - db)
-                outputX[count] = inputX[i] + (inputX[j] - inputX[i]) * t
-                outputY[count] = inputY[i] + (inputY[j] - inputY[i]) * t
+                clipOutputX[count] = clipInputX[i] + (clipInputX[j] - clipInputX[i]) * t
+                clipOutputY[count] = clipInputY[i] + (clipInputY[j] - clipInputY[i]) * t
                 count++
             }
         }
@@ -217,7 +227,7 @@ class WaterSurfaceSimulation2D(
         var twiceArea = 0f
         for (i in 0 until count) {
             val j = (i + 1) % count
-            twiceArea += outputX[i] * outputY[j] - outputX[j] * outputY[i]
+            twiceArea += clipOutputX[i] * clipOutputY[j] - clipOutputX[j] * clipOutputY[i]
         }
         return abs(twiceArea) * 0.5f
     }
