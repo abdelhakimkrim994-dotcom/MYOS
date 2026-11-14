@@ -123,6 +123,10 @@ private class SloshWater(private val density: Float) {
         simulation.addImpulse(strength.coerceIn(0f, 2f) * 4f)
     }
 
+    fun disturb(position: Float, impulse: Float) {
+        simulation.disturbSurface(position, impulse)
+    }
+
     fun step(dt: Float) {
         simulation.advance(dt)
     }
@@ -1162,11 +1166,17 @@ class MainActivity : Activity() {
                     when (gestureMode) {
                         GestureMode.OPENING -> {
                             drawerProgress = (gestureStartProgress - (event.y - gestureStartY) / (height * 0.70f)).coerceIn(0f, 1f)
+                            val surfacePosition = (event.x / width.coerceAtLeast(1) * 2f - 1f)
+                            val dragImpulse = ((lastY - event.y) / height.coerceAtLeast(1) * 50f).coerceIn(-2f, 2f)
+                            slosh.disturb(surfacePosition, dragImpulse)
                             invalidate()
                         }
                         GestureMode.CLOSING -> {
                             if (dy > 0f) {
                                 drawerProgress = (gestureStartProgress - (event.y - gestureStartY) / (height * 0.70f)).coerceIn(0f, 1f)
+                                val surfacePosition = (event.x / width.coerceAtLeast(1) * 2f - 1f)
+                                val dragImpulse = ((lastY - event.y) / height.coerceAtLeast(1) * 50f).coerceIn(-2f, 2f)
+                                slosh.disturb(surfacePosition, dragImpulse)
                                 invalidate()
                             } else if (drawerProgress >= 0.999f && scrollY > 0f) {
                                 gestureMode = GestureMode.SCROLLING
