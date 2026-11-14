@@ -67,6 +67,8 @@ private class SloshWater(private val density: Float) {
     private var surfaceY = 0f
     private var surfaceTx = 1f
     private var surfaceTy = 0f
+    private var surfaceNx = 0f
+    private var surfaceNy = -1f
     var gravityX: Float = 0f
         private set
     var gravityY: Float = 1f
@@ -79,12 +81,30 @@ private class SloshWater(private val density: Float) {
     private val matrix = Matrix()
     private val gradient = LinearGradient(
         0f, 0f, 0f, 1f,
-        Color.argb(112, 190, 250, 255),
-        Color.argb(178, 0, 145, 190),
+        Color.argb(184, 168, 250, 246),
+        Color.argb(224, 0, 91, 143),
         Shader.TileMode.CLAMP
     )
     private val body = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = gradient }
     private val depth = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val depthMatrix = Matrix()
+    private val depthGradient = LinearGradient(
+        0f, 0f, 0f, 1f,
+        intArrayOf(
+            Color.argb(18, 188, 255, 250),
+            Color.argb(42, 20, 188, 205),
+            Color.argb(112, 0, 94, 139),
+            Color.argb(218, 0, 28, 66)
+        ),
+        floatArrayOf(0f, 0.22f, 0.68f, 1f),
+        Shader.TileMode.CLAMP
+    )
+    private val refract = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = Color.rgb(184, 250, 247)
+    }
     private val caustic = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -148,6 +168,8 @@ private class SloshWater(private val density: Float) {
         surfaceY = sy
         surfaceTx = tx
         surfaceTy = ty
+        surfaceNx = nx
+        surfaceNy = ny
 
         val extent = kotlin.math.hypot(w, h)
         val waveScale = min(w, h)
@@ -183,78 +205,115 @@ private class SloshWater(private val density: Float) {
         if (alpha <= 0.01f || w <= 0f || h <= 0f) return
         buildPath(w, h)
 
-        // Layer 1: translucent body with a bright surface and deeper blue-green base.
+        val extent = kotlin.math.hypot(w, h)
+        val waveScale = min(w, h)
+
+        // 1. The water body: bright, translucent surface fading into a deep blue volume.
         body.alpha = (alpha * 255f).toInt().coerceIn(0, 255)
         canvas.drawPath(path, body)
 
-        // Layer 2: darkened side walls create the illusion of thickness and rounded volume.
-        depth.shader = LinearGradient(
-            0f, 0f, 0f, h,
-            intArrayOf(
-                Color.argb(8, 0, 44, 70),
-                Color.argb(24, 0, 55, 82),
-                Color.argb(112, 0, 35, 67),
-                Color.argb(188, 0, 23, 54)
-            ),
-            floatArrayOf(0f, 0.24f, 0.72f, 1f),
-            Shader.TileMode.CLAMP
-        )
-        depth.alpha = (alpha * 220f).toInt().coerceIn(0, 220)
+        // 2. Depth absorption. This gradient is clipped to the actual sloshing volume,
+        //    so the bottom gets darker while the moving surface remains luminous.
+        depthGradient.setLocalMatrix(Matrix().apply { setScale(1f, h) })
+        depth.shader = depthGradient
+        depth.alpha = (alpha * 235f).toInt().coerceIn(0, 235)
         canvas.drawPath(path, depth)
         depth.shader = null
 
-        // Layer 3: refracted caustic ribbons inside the liquid, moving at different depths.
+        // 3. Underwater caustics. Each band is laid out relative to the current
+        //    free surface and samples the propagated wave field, rather than scrolling
+        //    independently like decorative ribbons.
         canvas.save()
         canvas.clipPath(path)
-        for (i in 0 until 16) {
-            val depthFactor = 0.12f + (i % 8) * 0.105f
-            val y = h * (1f - fill * depthFactor)
-            val x = ((i * 0.137f + phase * (0.018f + (i % 3) * 0.006f)) % 1.2f - 0.1f) * w
-            val length = w * (0.08f + (i % 5) * 0.032f)
-            val sway = sin(phase * 0.52f + i * 1.7f) * (7f + depthFactor * 8f) * density
+        for (row in 0 until 9) {
+            val depthFraction = 0.13f + row * 0.092f
+            val depthOffset = extent * depthFraction
             causticPath.rewind()
-            causticPath.moveTo(x, y + sway)
-            causticPath.cubicTo(
-                x + length * 0.28f, y - 8f * density + sway,
-                x + length * 0.68f, y + 9f * density + sway,
-                x + length, y + sway * 0.45f
-            )
-            caustic.color = if (i % 3 == 0) Color.rgb(202, 255, 250) else Color.rgb(105, 229, 238)
-            caustic.strokeWidth = (1f + (i % 3) * 0.55f) * density
-            caustic.alpha = (alpha * (24f + (i % 4) * 12f)).toInt().coerceIn(0, 72)
+            for (sample in 0..28) {
+                val normalized = sample / 28f * 2f - 1f
+                val u = normalized * extent * 0.92f
+                val physicalWave = simulation.waveHeightAt(normalized) * waveScale
+                val opticalWarp = sin(phase * 0.72f + normalized * 5.2f + row * 0.83f) *
+                    (2.2f + depthFraction * 5.5f) * density
+                val x = surfaceX + surfaceTx * u +
+                    (-surfaceNx) * depthOffset + surfaceNx * (physicalWave * 0.42f + opticalWarp)
+                val y = surfaceY + surfaceTy * u +
+                    (-surfaceNy) * depthOffset + surfaceNy * (physicalWave * 0.42f + opticalWarp)
+                if (sample == 0) causticPath.moveTo(x, y) else causticPath.lineTo(x, y)
+            }
+            caustic.color = if (row % 3 == 0) {
+                Color.rgb(205, 255, 247)
+            } else {
+                Color.rgb(89, 218, 231)
+            }
+            caustic.strokeWidth = (0.8f + (row % 3) * 0.38f) * density
+            caustic.alpha = (alpha * (18f + (row % 4) * 8f) *
+                (1f - depthFraction * 0.45f)).toInt().coerceIn(0, 48)
             canvas.drawPath(causticPath, caustic)
         }
 
-        // Soft shafts and scattered specular glints make the water read as a 3D medium.
-        for (i in 0 until 7) {
-            val x = w * (0.10f + i * 0.135f) + sin(phase * 0.4f + i) * 7f * density
-            val y = h * (1f - fill * (0.22f + (i % 4) * 0.16f))
-            glint.strokeWidth = (1.1f + (i % 2) * 0.8f) * density
-            glint.alpha = (alpha * (32f + (i % 3) * 18f)).toInt().coerceIn(0, 86)
-            canvas.drawLine(x, y, x + (12f + (i % 3) * 5f) * density, y - 2f * density, glint)
+        // 4. Subtle refractive streaks: short, curved light paths bend with the
+        //    simulated surface and fade with depth.
+        for (ray in 0 until 5) {
+            val normalized = -0.82f + ray * 0.41f
+            val u = normalized * extent * 0.78f
+            val wave = simulation.waveHeightAt(normalized) * waveScale
+            val startX = surfaceX + surfaceTx * u - surfaceNx * extent * 0.10f + surfaceNx * wave
+            val startY = surfaceY + surfaceTy * u - surfaceNy * extent * 0.10f + surfaceNy * wave
+            val endX = startX - surfaceNx * extent * (0.20f + (ray % 2) * 0.06f)
+            val endY = startY - surfaceNy * extent * (0.20f + (ray % 2) * 0.06f)
+            refract.strokeWidth = (1.1f + (ray % 2) * 0.55f) * density
+            refract.alpha = (alpha * (13f + (ray % 3) * 5f)).toInt().coerceIn(0, 28)
+            causticPath.rewind()
+            causticPath.moveTo(startX, startY)
+            causticPath.quadTo(
+                (startX + endX) * 0.5f + surfaceTx * 12f * density,
+                (startY + endY) * 0.5f + surfaceTy * 12f * density,
+                endX, endY
+            )
+            canvas.drawPath(causticPath, refract)
         }
         canvas.restore()
 
-        // Layer 4: bright Fresnel-like rim and a broad, soft reflection on the free surface.
-        soft.alpha = (85f * alpha).toInt().coerceIn(0, 85)
-        foam.alpha = (220f * alpha).toInt().coerceIn(0, 220)
+        // 5. The free surface catches light. Keep the broad rim soft, then add
+        //    broken highlights whose brightness follows local wave slope.
+        soft.alpha = (38f * alpha).toInt().coerceIn(0, 38)
+        foam.alpha = (74f * alpha).toInt().coerceIn(0, 74)
         canvas.drawPath(edge, soft)
         canvas.drawPath(edge, foam)
-        glint.strokeWidth = 1.2f * density
-        glint.alpha = (alpha * 115f).toInt().coerceIn(0, 115)
+
+        for (i in 0 until 15) {
+            val normalized = -0.94f + i * 0.134f
+            val u = normalized * extent * 0.88f
+            val wave = simulation.waveHeightAt(normalized) * waveScale
+            val nextWave = simulation.waveHeightAt((normalized + 0.035f).coerceAtMost(1f)) * waveScale
+            val slope = abs(nextWave - wave) / max(1f, waveScale * 0.035f)
+            val highlight = (slope * 1.8f + 0.18f).coerceIn(0.12f, 1f)
+            val x = surfaceX + surfaceTx * u + surfaceNx * wave
+            val y = surfaceY + surfaceTy * u + surfaceNy * wave
+            val dash = (5f + (i % 4) * 3f) * density
+            glint.strokeWidth = (0.8f + highlight * 1.1f) * density
+            glint.alpha = (alpha * (30f + highlight * 105f)).toInt().coerceIn(0, 135)
+            causticPath.rewind()
+            causticPath.moveTo(x - surfaceTx * dash * 0.5f, y - surfaceTy * dash * 0.5f)
+            causticPath.lineTo(x + surfaceTx * dash * 0.5f, y + surfaceTy * dash * 0.5f)
+            canvas.drawPath(causticPath, glint)
+        }
+
+        // A restrained moving reflection glides along the centre of the surface.
+        val reflectionCenter = sin(phase * 0.38f) * w * 0.16f
+        val reflectionHalf = w * 0.17f
+        glint.strokeWidth = 1.6f * density
+        glint.alpha = (alpha * 72f).toInt().coerceIn(0, 72)
         causticPath.rewind()
-        val rimHalf = w * 0.22f
-        val ripple = sin(phase) * 2.5f * density
-        causticPath.moveTo(
-            surfaceX - surfaceTx * rimHalf,
-            surfaceY - surfaceTy * rimHalf
-        )
-        causticPath.quadTo(
-            surfaceX + surfaceTx * 0.02f * w - surfaceTy * ripple,
-            surfaceY + surfaceTy * 0.02f * w + surfaceTx * ripple,
-            surfaceX + surfaceTx * rimHalf,
-            surfaceY + surfaceTy * rimHalf
-        )
+        for (i in 0..12) {
+            val u = reflectionCenter - reflectionHalf + i / 12f * reflectionHalf * 2f
+            val normalized = (u / extent).coerceIn(-1f, 1f)
+            val wave = simulation.waveHeightAt(normalized) * waveScale
+            val x = surfaceX + surfaceTx * u + surfaceNx * wave
+            val y = surfaceY + surfaceTy * u + surfaceNy * wave
+            if (i == 0) causticPath.moveTo(x, y) else causticPath.lineTo(x, y)
+        }
         canvas.drawPath(causticPath, glint)
     }
 }
@@ -1134,7 +1193,6 @@ class MainActivity : Activity() {
             drawDrawerBackdrop(canvas)
             canvas.restore()
             drawWater(canvas)
-            drawWaterLife(canvas)
             drawApps(canvas)
         }
 
