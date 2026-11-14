@@ -53,7 +53,7 @@ internal class LiquidRenderer(private val onDiagnostics: (String) -> Unit) : GLS
     private var resolutionHandle = 0
     private var shakeHandle = 0
     private var surfaceOffsetHandle = 0
-    private val volumeSolver = SurfaceVolumeSolver()
+    private val volumeSolver = SurfaceVolumeSolver(targetFill = 0.82f)
     private var lastGoodSurfaceOffset = 0f
     private val upSignX = -1f
     private val upSignZ = 1f
@@ -381,10 +381,11 @@ internal class LiquidRenderer(private val onDiagnostics: (String) -> Unit) : GLS
                 vec2 uv = vUv;
                 float aspect = uResolution.x / uResolution.y;
                 vec2 screen = (uv - 0.5) * vec2(aspect, 1.0);
-                // Anchor the camera to the physical front-glass plane. The scale
-                // preserves the original 0.3.7 framing at z=+0.305.
-                vec2 win = screen * 2.436;
-                vec2 eye = clamp(uEye, vec2(-1.0), vec2(1.0)) * vec2(0.20, 0.26);
+                // Drawer presentation: move inside the tank and crop past its
+                // glass walls so the liquid reads as a full-screen surface, not a
+                // distant aquarium. Keep a small parallax range inside the volume.
+                vec2 win = screen * 1.15;
+                vec2 eye = clamp(uEye, vec2(-1.0), vec2(1.0)) * vec2(0.06, 0.08);
                 vec3 ro = vec3(eye, 3.35);
                 vec3 rd = normalize(vec3(win - eye, TANK.z - 3.35));
                 vec3 up = normalize(uUp);
