@@ -98,7 +98,8 @@ private enum class Category(val title:String) {
 private data class AppItem(val label:String,val pkg:String,val category:Category)
 
 private class ShanshuiLauncherView(context:Context):View(context) {
-    var drawerOpen=false; private set
+    var drawerOpen=false
+        private set
     var onSearch:(()->Unit)?=null
     var onClosed:(()->Unit)?=null
     private val d=resources.displayMetrics.density
@@ -141,12 +142,12 @@ private class ShanshuiLauncherView(context:Context):View(context) {
     private fun categoryFor(raw:String):Category {
         val s=raw.lowercase()
         return when {
-            listOf("phone","dialer","contact","message","sms","mail","gmail","whatsapp","telegram").any(s::contains)->Category.COMMUNICATION
-            listOf("camera","gallery","photo","image","editor","paint").any(s::contains)->Category.CREATE
-            listOf("setting","calendar","clock","calculator","file","document","notes").any(s::contains)->Category.TOOLS
-            listOf("music","audio","spotify","youtube","video","player","netflix").any(s::contains)->Category.MEDIA
-            listOf("map","navigation","travel","location").any(s::contains)->Category.PLACES
-            listOf("system","security","permission","launcher").any(s::contains)->Category.SYSTEM
+            listOf("phone","dialer","contact","message","sms","mail","gmail","whatsapp","telegram").any { s.contains(it) }->Category.COMMUNICATION
+            listOf("camera","gallery","photo","image","editor","paint").any { s.contains(it) }->Category.CREATE
+            listOf("setting","calendar","clock","calculator","file","document","notes").any { s.contains(it) }->Category.TOOLS
+            listOf("music","audio","spotify","youtube","video","player","netflix").any { s.contains(it) }->Category.MEDIA
+            listOf("map","navigation","travel","location").any { s.contains(it) }->Category.PLACES
+            listOf("system","security","permission","launcher").any { s.contains(it) }->Category.SYSTEM
             else->Category.OTHER
         }
     }
@@ -268,12 +269,12 @@ private class ShanshuiLauncherView(context:Context):View(context) {
         val n=(app.label+" "+app.pkg).lowercase()
         when {
             "camera" in n->{c.drawRoundRect(RectF(-18f,-12f,18f,14f),4f,4f,paint);c.drawCircle(0f,1f,7f,paint);c.drawLine(-7f,-12f,1f,-17f,paint)}
-            listOf("photo","gallery","image").any(n::contains)->{c.drawRoundRect(RectF(-18f,-15f,18f,15f),3f,3f,paint);val q=Path().apply{moveTo(-14f,10f);lineTo(-5f,0f);lineTo(1f,7f);lineTo(8f,-2f);lineTo(15f,10f)};c.drawPath(q,paint);c.drawCircle(9f,-8f,2f,paint)}
-            listOf("phone","dialer").any(n::contains)->{val q=Path().apply{moveTo(-12f,-17f);cubicTo(-18f,-11f,-8f,8f,9f,16f);cubicTo(15f,17f,18f,9f,13f,5f);lineTo(7f,1f);lineTo(1f,7f);cubicTo(-4f,4f,-7f,0f,-7f,-4f);lineTo(-2f,-9f);close()};c.drawPath(q,paint)}
-            listOf("message","sms","chat","whatsapp","telegram").any(n::contains)->{c.drawRoundRect(RectF(-18f,-14f,18f,11f),7f,7f,paint);val q=Path().apply{moveTo(-8f,11f);lineTo(-14f,18f);lineTo(1f,11f)};c.drawPath(q,paint);for(i in -8..8 step 8)c.drawCircle(i.toFloat(),-1f,1f,paint)}
-            listOf("map","navigation").any(n::contains)->{val q=Path().apply{moveTo(-16f,-12f);lineTo(-4f,-16f);lineTo(7f,-11f);lineTo(16f,-15f);lineTo(16f,12f);lineTo(7f,16f);lineTo(-4f,11f);lineTo(-16f,15f);close()};c.drawPath(q,paint);c.drawCircle(1f,-1f,5f,paint)}
-            listOf("music","audio","spotify").any(n::contains)->{val q=Path().apply{moveTo(5f,-17f);lineTo(5f,9f);cubicTo(5f,18f,-12f,19f,-12f,10f);cubicTo(-12f,4f,-3f,1f,5f,4f);moveTo(5f,-17f);lineTo(16f,-14f);lineTo(16f,-8f);lineTo(5f,-11f)};c.drawPath(q,paint)}
-            listOf("mail","gmail","email").any(n::contains)->{c.drawRoundRect(RectF(-18f,-13f,18f,13f),3f,3f,paint);val q=Path().apply{moveTo(-17f,-11f);lineTo(0f,2f);lineTo(17f,-11f)};c.drawPath(q,paint)}
+            listOf("photo","gallery","image").any { n.contains(it) }->{c.drawRoundRect(RectF(-18f,-15f,18f,15f),3f,3f,paint);val q=Path().apply{moveTo(-14f,10f);lineTo(-5f,0f);lineTo(1f,7f);lineTo(8f,-2f);lineTo(15f,10f)};c.drawPath(q,paint);c.drawCircle(9f,-8f,2f,paint)}
+            listOf("phone","dialer").any { n.contains(it) }->{val q=Path().apply{moveTo(-12f,-17f);cubicTo(-18f,-11f,-8f,8f,9f,16f);cubicTo(15f,17f,18f,9f,13f,5f);lineTo(7f,1f);lineTo(1f,7f);cubicTo(-4f,4f,-7f,0f,-7f,-4f);lineTo(-2f,-9f);close()};c.drawPath(q,paint)}
+            listOf("message","sms","chat","whatsapp","telegram").any { n.contains(it) }->{c.drawRoundRect(RectF(-18f,-14f,18f,11f),7f,7f,paint);val q=Path().apply{moveTo(-8f,11f);lineTo(-14f,18f);lineTo(1f,11f)};c.drawPath(q,paint);for(i in -8..8 step 8)c.drawCircle(i.toFloat(),-1f,1f,paint)}
+            listOf("map","navigation").any { n.contains(it) }->{val q=Path().apply{moveTo(-16f,-12f);lineTo(-4f,-16f);lineTo(7f,-11f);lineTo(16f,-15f);lineTo(16f,12f);lineTo(7f,16f);lineTo(-4f,11f);lineTo(-16f,15f);close()};c.drawPath(q,paint);c.drawCircle(1f,-1f,5f,paint)}
+            listOf("music","audio","spotify").any { n.contains(it) }->{val q=Path().apply{moveTo(5f,-17f);lineTo(5f,9f);cubicTo(5f,18f,-12f,19f,-12f,10f);cubicTo(-12f,4f,-3f,1f,5f,4f);moveTo(5f,-17f);lineTo(16f,-14f);lineTo(16f,-8f);lineTo(5f,-11f)};c.drawPath(q,paint)}
+            listOf("mail","gmail","email").any { n.contains(it) }->{c.drawRoundRect(RectF(-18f,-13f,18f,13f),3f,3f,paint);val q=Path().apply{moveTo(-17f,-11f);lineTo(0f,2f);lineTo(17f,-11f)};c.drawPath(q,paint)}
             "calendar" in n->{c.drawRoundRect(RectF(-15f,-15f,15f,16f),3f,3f,paint);c.drawLine(-15f,-6f,15f,-6f,paint);c.drawLine(-8f,-19f,-8f,-11f,paint);c.drawLine(8f,-19f,8f,-11f,paint)}
             "setting" in n->{c.drawCircle(0f,0f,7f,paint);for(i in 0..7){val a=i*PI/4;c.drawLine(cos(a).toFloat()*11,sin(a).toFloat()*11,cos(a).toFloat()*17,sin(a).toFloat()*17,paint)}}
             else->{c.drawCircle(0f,-7f,7f,paint);c.drawArc(RectF(-14f,0f,14f,20f),180f,180f,false,paint)}
