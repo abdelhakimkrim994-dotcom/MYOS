@@ -10,7 +10,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
@@ -254,23 +253,19 @@ class MainActivity : Activity(), SensorEventListener {
             val h = height.toFloat()
             canvas.drawColor(Color.rgb(12, 12, 15))
 
-            // Center-crop the approved artwork to fill the screen without stretching it.
+            // Show the complete artwork slightly inset, preserving the calligraphy and its edge margin.
             val imageAspect = wallpaper.width.toFloat() / wallpaper.height.toFloat()
-            val viewAspect = w / h
-            val src = if (imageAspect > viewAspect) {
-                val cropWidth = (wallpaper.height * viewAspect).toInt().coerceAtLeast(1)
-                val left = (wallpaper.width - cropWidth) / 2
-                Rect(left, 0, left + cropWidth, wallpaper.height)
-            } else {
-                val cropHeight = (wallpaper.width / viewAspect).toInt().coerceAtLeast(1)
-                val top = (wallpaper.height - cropHeight) / 2
-                Rect(0, top, wallpaper.width, top + cropHeight)
-            }
-            val offsetX = -parallaxX * 7f * density
-            val offsetY = -parallaxY * 7f * density
-            val dst = Rect(offsetX.toInt(), offsetY.toInt(), (w - offsetX).toInt(), (h - offsetY).toInt())
+            val maxWidth = w * 0.96f
+            val maxHeight = h * 0.96f
+            val drawWidth = min(maxWidth, maxHeight * imageAspect)
+            val drawHeight = drawWidth / imageAspect
+            val offsetX = -parallaxX * 2f * density
+            val offsetY = -parallaxY * 2f * density
+            val left = (w - drawWidth) / 2f + offsetX
+            val top = (h - drawHeight) / 2f + offsetY
+            val dst = RectF(left, top, left + drawWidth, top + drawHeight)
             paint.isFilterBitmap = true
-            canvas.drawBitmap(wallpaper, src, dst, paint)
+            canvas.drawBitmap(wallpaper, null, dst, paint)
             paint.clearShadowLayer()
             drawHomeDock(canvas, w, h)
         }
