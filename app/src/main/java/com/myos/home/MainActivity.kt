@@ -78,6 +78,11 @@ class MainActivity : Activity(), SensorEventListener {
             (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(search.windowToken,0)
         }
         setContentView(root)
+        root.post {
+            val lp = search.layoutParams as FrameLayout.LayoutParams
+            lp.topMargin = (scene.height * .18f).toInt()
+            search.layoutParams = lp
+        }
     }
 
     override fun onResume() { super.onResume(); if(::scene.isInitialized) scene.reloadApps(); accelerometer?.let { sensors.registerListener(this,it,SensorManager.SENSOR_DELAY_UI) } }
@@ -302,7 +307,7 @@ private class ShanshuiLauncherView(context:Context):View(context) {
                     if(RectF(width*.05f,height*.135f,width*.28f,height*.185f).contains(e.x,e.y)){az=!az;scroll=0f;invalidate()}
                     else if(RectF(width*.08f,height*.185f,width*.92f,height*.23f).contains(e.x,e.y))onSearch?.invoke()
                     else {
-                        val app=hits.firstOrNull{it.first.contains(e.x,e.y+scroll)}?.second
+                        val app=hits.firstOrNull{it.first.contains(e.x,e.y)}?.second
                         if(app!=null){context.packageManager.getLaunchIntentForPackage(app.pkg)?.let{context.startActivity(it)}}
                         else categoryHits.firstOrNull{it.first.contains(e.x,e.y)}?.second?.let(::jumpTo)
                     }
